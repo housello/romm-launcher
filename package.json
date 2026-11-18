@@ -1,0 +1,27 @@
+{
+  "name": "romm-launcher",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Lightweight RomM browser that launches games in locally installed emulators",
+  "license": "AGPL-3.0-only",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "npm run build && electron .",
+    "start": "electron .",
+    "package": "npm run build && electron-builder --win portable"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.14",
+    "electron": "^44.9.1",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.7.3"
+  },
+  "build": {
+    "appId": "local.romm.launcher",
+    "productName": "RomM Launcher",
+    "directories": { "output": "release" },
+    "files": ["dist/**", "renderer/**", "package.json"],
+    "win": { "target": "portable" }
+  }
+}

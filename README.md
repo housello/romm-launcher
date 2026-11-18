@@ -1,0 +1,124 @@
+# RomM Launcher
+
+A lightweight Windows client for a [RomM](https://github.com/rommapp/romm) server that
+browses your library live and launches games in **your own locally installed emulators**.
+
+Unlike the Playnite plugin, nothing is synced: the library is read from the RomM API
+page by page as you scroll, so it opens in a couple of seconds whatever the size of
+the collection. The only things stored locally are:
+
+- `launcher-config.json`: server, emulators, platform mapping (password encrypted with Windows DPAPI)
+- `installed.json`: the games you downloaded
+- `image-cache/`: cover art, so revisits are instant
+- the downloaded games themselves (default `%APPDATA%\romm-launcher\roms\<platform>\`, configurable per platform)
+
+All under `%APPDATA%\romm-launcher\` (override with the `ROMM_LAUNCHER_DATA` env var).
+
+## Run
+
+```powershell
+npm install
+npm run dev
+```
+
+Build a portable `.exe`: `npm run package` (output in `release/`).
+
+## Setup
+
+1. **Settings → Server**: URL, username/password (HTTP Basic) or a RomM client/API token. *Save & test.*
+2. **Settings → Emulators**: add one from a preset (RetroArch, Dolphin, PCSX2, DuckStation, PPSSPP,
+   RPCS3, Cemu, Ryujinx, Azahar, melonDS, mGBA, Flycast, xemu, Xenia, MAME, DOSBox, Custom),
+   or click **Detect RetroArch**. Adding a preset automatically maps it to the platforms it
+   usually runs (only those with no emulator yet).
+3. **Settings → Platforms**: choose the emulator per platform, the libretro core
+   (for RetroArch; ★ marks the suggested one), and if needed per-platform arguments and a
+   download folder. The filter box and "only platforms without an emulator" help with long lists.
+
+Platforms without an emulator show an orange dot in the sidebar. Pressing Play on one
+takes you straight to its row in the Platforms tab.
+
+### Argument placeholders
+
+| Placeholder | Value |
+| --- | --- |
+| `{rom}` | full path of the game file to launch |
+| `{romDir}` | its folder |
+| `{romFile}` | file name with extension |
+| `{romName}` | file name without extension |
+| `{emuDir}` | folder of the emulator executable |
+| `{core}` | core set for the platform (RetroArch: `-L "{emuDir}\cores\{core}_libretro.dll" "{rom}"`) |
+
+Arguments are split like a Windows command line and substituted per argument, so paths
+with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers also work.
+
+## Playing
+
+- **Play** downloads the game if needed (with progress), then starts the emulator.
+  The launcher minimizes while you play and comes back when the emulator exits.
+- **Multi-file games** are downloaded file by file, keeping their folder layout.
+  Multi-disc sets with no playlist get an `.m3u` written automatically. Otherwise the
+  launcher picks the most likely boot file (`.cue`, `.chd`, `.iso`, `EBOOT.BIN`, …).
+  When a game has **several launchable files** (e.g. `GAME.EXE` and `SETUP.EXE`), the first
+  Play asks which one to start and remembers the answer. Readmes, data files and cue-sheet
+  tracks are not offered. You can change the chosen file later in the game's detail panel.
+- **Versions**: RomM groups versions of the same game (regions, revisions) as *siblings*.
+  The launcher shows one card per game, marked "N versions". Pressing Play on it asks
+  which version to download and start, preselecting the one you already downloaded. In the
+  detail panel, the Versions list switches between them. Turn grouping off in
+  Settings → Storage to see every version as its own card.
+- **Extract .zip games** (per emulator) unpacks zipped ROMs for emulators that cannot read
+  archives. Only zip (store/deflate, no zip64) is supported, not 7z.
+- **Downloaded** in the sidebar lists local games. Delete a local copy from the detail panel.
+- **Search**: the box above the grid (Ctrl+F) searches the current platform or collection;
+  the sidebar box (Ctrl+Shift+F) searches the whole library.
+
+### Where games are downloaded
+
+`<download folder>\<platform slug>\rom.ext`, with multi-file games in their own folder
+(`<platform slug>\<game folder>\...`), the same layout as a RomM library. The download folder
+is set in Settings → Storage; each platform can point somewhere else in Settings → Platforms.
+
+If a platform points at a folder that already holds your ROMs, a game whose file is already
+there with the right size is used as-is, without downloading. **Delete local copy** only
+removes files the launcher itself downloaded, never files that were already there.
+
+## Save sync
+
+On by default (Settings → Storage). With sync turned off, every emulator uses its own
+native save folders and the launcher adds nothing to its command line. With sync on, for every launch:
+
+1. **Before the emulator starts**, the newest save and states on RomM for that game are
+   downloaded, if they changed since the last sync.
+2. **After the emulator exits**, local saves/states that changed are uploaded.
+
+How saves are found is set per emulator (Settings → Emulators → Save sync):
+
+- **RetroArch (automatic)**: the launcher adds `--appendconfig` with a small config that
+  points `savefile_directory` / `savestate_directory` at a per-game folder. Your
+  `retroarch.cfg` is not touched. The libretro core name is used as RomM's `emulator`, so
+  saves are compatible with RomM's in-browser player for the same core. Saves made
+  *before* using this launcher are still in RetroArch's own folder: copy them once into the
+  game's save folder if you want them synced.
+- **Custom file patterns**: e.g. `{romDir}/{romName}.sav` (mGBA and melonDS presets come
+  with this). Placeholders as for arguments, plus `{saveDir}`. `*` is allowed in the file name.
+- **Off**: e.g. Dolphin, PCSX2 and PPSSPP, which keep saves in memory cards or by game ID
+  rather than one file per game.
+
+Synced saves live in the save folder (default `%APPDATA%\romm-launcher\saves\<platform>\<romId>`),
+not in the game folder, so deleting a game's local copy keeps them. If a pattern points
+inside the game folder, those saves are uploaded before the copy is deleted (and nothing is
+deleted if the upload fails).
+
+**No save is ever lost**: before a server copy replaces a local file, the local file is
+copied to `.backups\` in the game's save folder (last 10 per file). When both sides changed,
+the newer one wins and the other stays in the backups. The game page lists the saves
+on RomM and has a **Sync saves** button.
+
+Uses the `/api/saves` and `/api/states` endpoints (no device registration).
+
+## Not included (yet)
+
+Play-time reporting, 7z extraction, controller navigation, uploading saves while a game is
+still running (only on exit).
+
+`src/main/zip.ts` is copied from [rommapp/desktop](https://github.com/rommapp/desktop) (AGPL-3.0).

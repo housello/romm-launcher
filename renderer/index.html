@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' romm-img: data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>RomM Launcher</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside id="sidebar">
+    <div class="brand">RomM <span>Launcher</span></div>
+    <div class="search"><input id="search" type="search" placeholder="Search all games…" title="Ctrl+Shift+F"></div>
+    <nav>
+      <a data-view="all" class="nav-item">All games</a>
+      <a data-view="installed" class="nav-item">Downloaded</a>
+    </nav>
+    <div class="section-title" id="collections-title" hidden>Collections</div>
+    <nav id="collections"></nav>
+    <div class="section-title">Platforms</div>
+    <nav id="platforms"><div class="muted pad">Loading…</div></nav>
+    <div class="sidebar-foot">
+      <a data-view="settings" class="nav-item">⚙ Settings</a>
+    </div>
+  </aside>
+
+  <main id="main">
+    <header id="toolbar">
+      <h1 id="view-title">All games</h1>
+      <span id="view-count" class="muted"></span>
+      <div class="spacer"></div>
+      <input id="view-search" type="search" placeholder="Search…" title="Ctrl+F">
+      <select id="sort">
+        <option value="name:asc">Name A→Z</option>
+        <option value="name:desc">Name Z→A</option>
+        <option value="created_at:desc">Recently added</option>
+        <option value="first_release_date:desc">Release date</option>
+        <option value="fs_size_bytes:desc">Size</option>
+      </select>
+      <input id="zoom" type="range" min="120" max="260" value="170" title="Cover size">
+    </header>
+    <section id="content">
+      <div id="grid"></div>
+      <div id="sentinel"></div>
+      <div id="empty" class="empty" hidden></div>
+    </section>
+    <section id="settings" hidden></section>
+  </main>
+
+  <div id="detail" class="drawer" hidden></div>
+  <div id="chooser" hidden></div>
+  <div id="toasts"></div>
+  <script src="app.js"></script>
+</body>
+</html>
