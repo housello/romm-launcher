@@ -10,7 +10,8 @@ import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep 
 import { apiFetch, apiGet } from "./api";
 import { loadConfig, type EmulatorDef, type PlatformMapping } from "./config";
 import { buildArgs } from "./emulators";
-import { getInstalled, putInstalled, removeInstalled, type InstalledGame } from "./library";
+import { getInstalled, listInstalled, putInstalled, removeInstalled, type InstalledGame } from "./library";
+import { findChdFolder, isArcade, setNameOf } from "./chd";
 import { readZipFiles } from "./zip";
 import { describe, gameSaveDir, prepareSaves, pullSaves, pushSaves, type SyncContext } from "./saves";
 
@@ -251,6 +252,52 @@ async function extractZip(dir: string, zipRel: string, deleteZip: boolean): Prom
   return out;
 }
 
+/**
+ * A MAME romset's disk images, when the server keeps them as a RomM game of their
+ * own (roms/chd/sfiii/…): downloaded next to the romset as <set>/<disk>.chd, which
+ * is where MAME looks. A clone uses its parent's folder (sfiiia → sfiii).
+ * Never fails the launch: without the CHD, MAME itself reports the missing disk.
+ */
+async function fetchCompanions(
+  romId: number,
+  slugs: Array<string | undefined | null>,
+  dir: string,
+  launchFile: string,
+  signal: AbortSignal,
+  emit: Emit,
+): Promise<{ companions: string[]; created: string[]; bytes: number }> {
+  const none = { companions: [], created: [], bytes: 0 };
+  if (!isArcade(slugs) || !setNameOf(basename(launchFile))) return none;
+  emit({ romId, type: "progress", label: "Looking for CHD disks…", received: 0, total: 0 });
+  let chd;
+  try {
+    chd = await findChdFolder(basename(launchFile));
+  } catch (error) {
+    emit({ romId, type: "notice", message: `Could not look for CHD disks: ${(error as Error).message}`, level: "error" });
+    return none;
+  }
+  if (!chd) return none;
+  const companions: string[] = [];
+  const created: string[] = [];
+  const total = chd.files.reduce((s, f) => s + f.sizeBytes, 0);
+  let bytes = 0;
+  for (const [i, file] of chd.files.entries()) {
+    const rel = join(safeRelative(chd.folder), safeRelative(basename(file.fileName)));
+    const dest = join(dir, rel);
+    const label = `CHD ${chd.folder}/${basename(file.fileName)}${chd.files.length > 1 ? ` (${i + 1}/${chd.files.length})` : ""}`;
+    if (alreadyThere(dest, file.sizeBytes)) {
+      bytes += file.sizeBytes;
+    } else {
+      const base = bytes;
+      bytes += await downloadTo(`/api/roms/${chd.romId}/content/${encodeURIComponent(file.fileName)}?file_ids=${file.id}`, dest, signal,
+        (r, t) => emit({ romId, type: "progress", label, received: base + r, total: total || t }));
+      created.push(rel);
+    }
+    companions.push(rel);
+  }
+  return { companions, created, bytes };
+}
+
 export async function install(romId: number, emit: Emit, options: { extractZip?: boolean } = {}): Promise<InstalledGame> {
   const existing = getInstalled(romId);
   if (existing) return existing;
@@ -316,6 +363,9 @@ export async function install(romId: number, emit: Emit, options: { extractZip?:
       created.push(launchFile);
     }
 
+    const extra = await fetchCompanions(romId, [rom.platform_slug, rom.platform_fs_slug], dir, launchFile, controller.signal, emit);
+    created.push(...extra.created);
+
     const game: InstalledGame = {
       romId,
       name: rom.name || romName,
@@ -324,8 +374,10 @@ export async function install(romId: number, emit: Emit, options: { extractZip?:
       dir,
       files: written,
       created,
+      companions: extra.companions,
+      companionsChecked: true,
       launchFile,
-      sizeBytes: done || totalBytes,
+      sizeBytes: (done || totalBytes) + extra.bytes,
       coverPath: rom.path_cover_small || rom.path_cover_large || null,
       coverUrl: rom.url_cover || null,
       installedAt: Date.now(),
@@ -358,7 +410,19 @@ export async function uninstall(romId: number): Promise<void> {
   const game = removeInstalled(romId);
   if (!game || !existsSync(game.dir)) return;
   if (game.created) {
-    await removeFiles(game.dir, game.created);
+    // A parent and its clones share one CHD folder: keep what another downloaded game uses.
+    const key = (d: string, rel: string) => join(d, rel).toLowerCase();
+    const others = listInstalled();
+    const inUse = new Set(others.flatMap((g) => [...g.files, ...(g.companions ?? [])].map((f) => key(g.dir, f))));
+    await removeFiles(game.dir, game.created.filter((rel) => !inUse.has(key(game.dir, rel))));
+    // A kept file now belongs to a game still using it, so deleting that one later removes it.
+    for (const rel of game.created.filter((r) => inUse.has(key(game.dir, r)))) {
+      const owner = others.find((g) => [...g.files, ...(g.companions ?? [])].some((f) => key(g.dir, f) === key(game.dir, rel)));
+      if (owner?.created) {
+        const ownRel = relative(owner.dir, join(game.dir, rel));
+        if (!owner.created.includes(ownRel)) putInstalled({ ...owner, created: [...owner.created, ownRel] });
+      }
+    }
     // A multi-file ROM's own folder goes too, once empty.
     if ((await readdir(game.dir).catch(() => ["?"])).length === 0) await rm(game.dir, { recursive: true, force: true });
   } else {
@@ -380,6 +444,26 @@ export async function launch(romId: number, emit: Emit, hooks: { onStart: () => 
   if (!existsSync(emulator.path)) throw new LaunchError(`Emulator not found: ${emulator.path}`);
 
   let game = local ?? (await install(romId, emit, { extractZip: emulator.extractZip }));
+  if (!game.companionsChecked && isArcade(slugs)) {
+    const controller = new AbortController();
+    jobs.set(romId, controller);
+    try {
+      const extra = await fetchCompanions(romId, slugs, game.dir, game.launchFile, controller.signal, emit);
+      game = {
+        ...game,
+        companions: extra.companions,
+        companionsChecked: true,
+        created: game.created ? [...game.created, ...extra.created] : game.created,
+        sizeBytes: game.sizeBytes + extra.bytes,
+      };
+      putInstalled(game);
+    } catch (error) {
+      if (controller.signal.aborted) throw new LaunchError("Download cancelled.");
+      throw error;
+    } finally {
+      jobs.delete(romId);
+    }
+  }
   // A folder with several launchable files: ask once which one, then remember it
   // (it can be changed later in the game's detail panel).
   const candidates = launchCandidates(game.files);

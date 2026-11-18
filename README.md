@@ -82,6 +82,27 @@ If a platform points at a folder that already holds your ROMs, a game whose file
 there with the right size is used as-is, without downloading. **Delete local copy** only
 removes files the launcher itself downloaded, never files that were already there.
 
+### MAME sets with CHD disks
+
+MAME looks for a set's disk images in a folder named after the set, next to the romset:
+`sfiii.zip` + `sfiii\cap-sf3-3.chd`. RomM often keeps those folders apart (e.g. `roms/chd`), so
+each CHD folder is a game of its own there. When an arcade romset (`.zip`/`.7z` on a `mame`,
+`arcade`, `fbneo`, … platform) is downloaded, the launcher also fetches its CHD folder and puts
+it next to the zip:
+
+```
+mame\sfiii.zip
+mame\sfiiia.zip
+mame\sfiii\cap-sf3-3.chd
+```
+
+The folder is found by name, as MAME does: the one named after the set, else, for a clone, the
+longest folder name the set starts with (`sfiiia` → `sfiii`, `sfiii3jr1` → `sfiii3`). Games
+downloaded before this existed get their CHD at their next launch. The CHD is never offered as
+a file to launch, and a CHD shared by a parent and its clones is deleted only together with the
+last downloaded game that uses it. Launching a CHD folder's own RomM entry is not supported:
+play the romset.
+
 ## Save sync
 
 On by default (Settings → Storage). With sync turned off, every emulator uses its own

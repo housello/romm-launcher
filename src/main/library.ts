@@ -18,6 +18,10 @@ export interface InstalledGame {
   created?: string[];
   /** Relative path handed to the emulator. */
   launchFile: string;
+  /** Files the game needs besides its own, relative to dir: a MAME set's CHD folder. */
+  companions?: string[];
+  /** The server was asked for this game's companion files (CHDs), so not again at every launch. */
+  companionsChecked?: boolean;
   /** The user picked launchFile among several candidates (so do not ask again). */
   launchChosen?: boolean;
   sizeBytes: number;
