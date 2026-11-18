@@ -37,6 +37,9 @@ Build a portable `.exe`: `npm run package` (output in `release/`).
 Platforms without an emulator show an orange dot in the sidebar. Pressing Play on one
 takes you straight to its row in the Platforms tab.
 
+**Settings → Appearance** chooses the theme: **Auto** (follows Windows' light/dark mode and
+switches with it), **Light** or **Dark**. It applies immediately, including scrollbars and dialogs.
+
 ### Argument placeholders
 
 | Placeholder | Value |
@@ -69,6 +72,10 @@ with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers
 - **Extract .zip games** (per emulator) unpacks zipped ROMs for emulators that cannot read
   archives. Only zip (store/deflate, no zip64) is supported, not 7z.
 - **Downloaded** in the sidebar lists local games. Delete a local copy from the detail panel.
+- **Favourites**: ☆/★ **Favourite** in a game's detail panel adds it to (or removes it from)
+  your RomM favourites, the same Favourites collection the web interface uses; it is created if
+  your user has none yet. The sort menu's **Favourites first** shows your favourites first, then
+  all other games, each part A→Z.
 - **Search**: the box above the grid (Ctrl+F) searches the current platform or collection;
   the sidebar box (Ctrl+Shift+F) searches the whole library.
 - **Large libraries** load page by page as you scroll; the footer shows how much is loaded,
@@ -78,7 +85,10 @@ with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers
   missing files) and searchable lists filled from your library (genres, franchises, series,
   companies, developers, publishers, players, age ratings, regions, languages, your status,
   tags). Filters stay on when you switch platform; **Clear all** resets them.
-- **Collections**: right-click a game, or use **+ Add to collection** in its detail panel, to
+- **Collections**: the **Collections** entry in the sidebar shows all your RomM collections as
+  cards (cover, game count, private/public); click one to browse its games, use
+  **+ New collection** to create one, and ✕ on your own collections to delete one (its games
+  stay in the library). Right-click a game, or use **+ Add to collection** in its detail panel, to
   add it to one of your RomM collections or a new one (private or public). The detail panel
   lists the game's collections; ✕ removes it from one. Collections belong to the RomM user the
   launcher signs in with; public collections of other users are listed but read-only.
@@ -169,6 +179,24 @@ XML or DAT (`mame -listxml`, or the DAT that came with your ROM set), e.g. `sf2`
 
 Names change for every user of the server, and a later RomM *Update metadata* scan may replace
 them with the metadata provider's titles. Renaming needs an account allowed to edit games.
+
+### MAME tags in names
+
+"Add MAME tags" appends what the XML says about each set to its name, in brackets:
+
+| Group | Tags |
+| --- | --- |
+| Kind | (Parent), (Clone), (BIOS), (Device) |
+| Mechanical | (Mechanical) |
+| Emulation status | (Working), (Imperfect), (Not Working) |
+
+e.g. *Street Fighter III: New Generation (Asia 970204) (Clone) (Imperfect)*. Each group can be
+switched off. Mechanical sets and emulation status are only in a `mame -listxml` file; many DATs
+leave them out (the tool says so).
+
+RomM reads the brackets in a name: the ones it recognises become metadata (region, language, …)
+and the others become **tags**, so after renaming you can filter by them in **Filters → Tags**
+(and in RomM's web interface), e.g. only *Parent* + *Working* games.
 
 ## Not included (yet)
 

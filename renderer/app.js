@@ -80,16 +80,13 @@ async function loadSidebar() {
       ${mapped[p.slug]?.emulatorId || mapped[p.fsSlug]?.emulatorId ? "" : '<span class="warn" title="No emulator set">●</span>'}
       <span class="count">${p.romCount}</span>
     </a>`).join("") || '<div class="muted pad">No platforms</div>';
-  $("#collections-title").hidden = state.collections.length === 0;
-  $("#collections").innerHTML = state.collections.map((c) => `
-    <a class="nav-item" data-collection="${c.id}"><span class="name">${esc(c.name)}</span><span class="count">${c.romCount || ""}</span></a>`).join("");
   markActive();
 }
 
 function markActive() {
   $$(".nav-item").forEach((a) => a.classList.remove("active"));
   const v = state.view;
-  const sel = v.kind === "platform" ? `[data-platform="${v.id}"]` : v.kind === "collection" ? `[data-collection="${v.id}"]` : `[data-view="${v.kind}"]`;
+  const sel = v.kind === "platform" ? `[data-platform="${v.id}"]` : v.kind === "collection" ? `[data-view="collections"]` : `[data-view="${v.kind}"]`;
   $(sel)?.classList.add("active");
 }
 
@@ -136,6 +133,11 @@ function reload() {
   state.error = null;
   state.total = 0;
   state.shown = 0;
+  // "Favourites first": part 0 = favourites, part 1 = everything else.
+  state.phase = 0;
+  state.phaseOffset = 0;
+  state.favTotal = undefined;
+  state.restTotal = undefined;
   state.seen = new Set(); // ids already shown, including folded versions
   state.items = new Map(); // id -> list item, for the version chooser
   $("#grid").innerHTML = "";
@@ -143,17 +145,36 @@ function reload() {
   $("#view-count").textContent = "";
   $("#content").scrollTop = 0;
   renderListFoot();
+  const isCollections = state.view.kind === "collections";
+  $("#filter-btn").hidden = isCollections;
+  $("#sort").hidden = isCollections;
+  if (isCollections) {
+    $("#filter-panel").hidden = true;
+    return renderCollectionsPage();
+  }
   if (state.view.kind === "installed") return renderInstalled();
   loadMore();
 }
 
 async function loadMore() {
-  if (state.loading || state.done || state.view.kind === "installed") return;
+  if (state.loading || state.done || state.view.kind === "installed" || state.view.kind === "collections") return;
   state.loading = true;
   state.error = null;
   const gen = state.gen;
-  const [orderBy, orderDir] = state.sort.split(":");
-  const params = { offset: state.offset, limit: state.config.pageSize || 60, search: state.search, orderBy, orderDir, filters: activeFilters() };
+  // RomM cannot sort by favourite, so "Favourites first" loads two filtered parts in a row
+  // (unless a favourite filter is already set, which makes it a single part).
+  const favFirst = state.sort === "favorite:first" && state.filters.flags.favorite === undefined;
+  const [orderBy, orderDir] = state.sort === "favorite:first" ? ["name", "asc"] : state.sort.split(":");
+  const base = activeFilters();
+  const partFilters = (fav) => ({ flags: { ...base.flags, favorite: fav }, lists: base.lists });
+  const params = {
+    offset: favFirst ? state.phaseOffset : state.offset,
+    limit: state.config.pageSize || 60,
+    search: state.search,
+    orderBy,
+    orderDir,
+    filters: favFirst ? partFilters(state.phase === 0) : base,
+  };
   if (state.view.kind === "platform") params.platformId = state.view.id;
   if (state.view.kind === "collection") params.collectionId = state.view.id;
   const firstPage = state.offset === 0;
@@ -163,9 +184,29 @@ async function loadMore() {
     const page = await api("roms:list", params);
     if (gen !== state.gen) return;
     if (firstPage) $("#empty").hidden = true;
-    state.total = page.total;
-    state.offset += page.items.length;
-    state.done = page.items.length === 0 || state.offset >= page.total;
+    if (favFirst) {
+      if (state.phase === 0 && state.phaseOffset === 0) {
+        state.favTotal = page.total;
+        // The size of the second part, so the count covers the whole view from the start.
+        const rest = await api("roms:list", { ...params, offset: 0, limit: 1, filters: partFilters(false) });
+        if (gen !== state.gen) return;
+        state.restTotal = rest.total;
+      }
+      state.total = (state.favTotal ?? 0) + (state.restTotal ?? 0);
+      state.phaseOffset += page.items.length;
+      state.offset += page.items.length;
+      const partDone = page.items.length === 0 || state.phaseOffset >= page.total;
+      if (partDone && state.phase === 0 && state.restTotal) {
+        state.phase = 1;
+        state.phaseOffset = 0;
+      } else if (partDone) {
+        state.done = true;
+      }
+    } else {
+      state.total = page.total;
+      state.offset += page.items.length;
+      state.done = page.items.length === 0 || state.offset >= page.total;
+    }
     // Fold versions client-side too, for servers that ignore group_by_meta_id.
     const fresh = page.items.filter((item) => {
       if (state.seen.has(item.id)) return false;
@@ -176,8 +217,8 @@ async function loadMore() {
     });
     state.shown += fresh.length;
     $("#grid").insertAdjacentHTML("beforeend", fresh.map(cardHtml).join(""));
-    $("#view-count").textContent = `${page.total} games`;
-    if (state.offset === 0) showEmpty(state.search || activeFilterCount() ? "No games match your search and filters." : "Nothing here.");
+    $("#view-count").textContent = `${state.total} games`;
+    if (state.done && state.offset === 0) showEmpty(state.search || activeFilterCount() ? "No games match your search and filters." : "Nothing here.");
   } catch (error) {
     if (gen !== state.gen) return;
     if (firstPage) {
@@ -194,12 +235,12 @@ async function loadMore() {
     }
   }
   // The new page may not fill the screen (or the user kept scrolling meanwhile).
-  if (gen === state.gen && !state.error) requestAnimationFrame(maybeLoadMore);
+  if (gen === state.gen && !state.error) setTimeout(maybeLoadMore, 0); // not rAF: paused while the window is hidden
 }
 
 /** Load the next page when the end of the list is near. One measure, checked on every scroll. */
 function maybeLoadMore() {
-  if (state.loading || state.done || state.error || state.view.kind === "installed" || $("#content").hidden) return;
+  if (state.loading || state.done || state.error || state.view.kind === "installed" || state.view.kind === "collections" || $("#content").hidden) return;
   const c = $("#content");
   if (c.scrollHeight - c.scrollTop - c.clientHeight < 1200) loadMore();
 }
@@ -208,7 +249,7 @@ let scrollQueued = false;
 $("#content").addEventListener("scroll", () => {
   if (scrollQueued) return;
   scrollQueued = true;
-  requestAnimationFrame(() => {
+  setTimeout(() => {
     scrollQueued = false;
     maybeLoadMore();
   });
@@ -219,7 +260,7 @@ window.addEventListener("resize", () => maybeLoadMore());
 function renderListFoot() {
   const foot = $("#list-foot");
   if (!foot) return;
-  if (state.view.kind === "installed" || state.offset === 0 && !state.loading) {
+  if (state.view.kind === "installed" || state.view.kind === "collections" || state.offset === 0 && !state.loading) {
     foot.innerHTML = "";
     return;
   }
@@ -271,6 +312,7 @@ function cardHtml(r) {
 }
 
 $("#grid").addEventListener("click", (e) => {
+  if (state.view.kind === "collections") return collectionsPageClick(e);
   const play = e.target.closest("[data-play]");
   if (play) {
     e.stopPropagation();
@@ -527,11 +569,78 @@ async function addToCollectionFlow(romId, romName, alreadyIn = []) {
 // Right-click a card: add it to a collection.
 $("#grid").addEventListener("contextmenu", (e) => {
   const card = e.target.closest(".card");
-  if (!card) return;
+  if (!card || card.dataset.coll || card.dataset.newColl) return;
   e.preventDefault();
   const id = Number(card.dataset.id);
   addToCollectionFlow(id, $(".title", card)?.textContent ?? "");
 });
+
+// ------------------------------------------------------------------ collections page
+
+async function renderCollectionsPage() {
+  const gen = state.gen;
+  showLoading();
+  let cols;
+  try {
+    cols = await api("collections:list");
+  } catch (error) {
+    if (gen === state.gen) showEmpty(error.message, true, true);
+    return;
+  }
+  if (gen !== state.gen) return;
+  state.collections = cols;
+  $("#empty").hidden = true;
+  const q = state.search.trim().toLowerCase();
+  const list = cols.filter((c) => !q || c.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  $("#view-count").textContent = `${cols.length} collection${cols.length === 1 ? "" : "s"}`;
+  const card = (c) => {
+    const src = img(c.cover);
+    const kind = [c.isFavorite ? "Favourites" : "", c.isPublic ? "Public" : "Private", c.mine ? "" : `by ${c.owner}`].filter(Boolean).join(" · ");
+    return `<div class="card" data-coll="${c.id}" title="${esc(c.description || c.name)}">
+      <div class="cover">${src ? `<img loading="lazy" src="${esc(src)}" alt="">` : ""}<span>${src ? "" : esc(c.name)}</span></div>
+      <span class="vbadge">${c.romCount} game${c.romCount === 1 ? "" : "s"}</span>
+      ${c.mine && !c.isFavorite ? `<button class="coll-del" data-del-coll="${c.id}" title="Delete this collection">✕</button>` : ""}
+      <div class="title">${esc(c.name)}</div>
+      <div class="sub">${esc(kind)}</div>
+    </div>`;
+  };
+  $("#grid").innerHTML = (q ? "" : `<div class="card" data-new-coll="1">
+      <div class="cover new-coll"><span>+ New collection</span></div>
+      <div class="title">New collection</div><div class="sub">Add games by right-clicking them</div></div>`) + list.map(card).join("");
+  if (!list.length && q) showEmpty("No collection matches your search.");
+}
+
+async function collectionsPageClick(e) {
+  const del = e.target.closest("[data-del-coll]");
+  if (del) {
+    e.stopPropagation();
+    const c = state.collections.find((x) => x.id === Number(del.dataset.delColl));
+    if (!c || !confirm(`Delete the collection “${c.name}”?\n\nOnly the collection is deleted; its ${c.romCount} games stay in your library.`)) return;
+    try {
+      await api("collections:delete", c.id);
+      toast(`Deleted “${c.name}”`, "ok");
+    } catch (error) {
+      toast(error.message, "error");
+    }
+    return renderCollectionsPage();
+  }
+  if (e.target.closest("[data-new-coll]")) {
+    const answer = await askText({ title: "New collection", placeholder: "Collection name", okLabel: "Create", checkbox: "Public (other RomM users can see it)" });
+    if (!answer) return;
+    try {
+      const created = await api("collections:create", answer.text, answer.checked);
+      toast(`Created “${created.name}”. Right-click games to add them.`, "ok");
+    } catch (error) {
+      toast(error.message, "error");
+    }
+    return renderCollectionsPage();
+  }
+  const card = e.target.closest("[data-coll]");
+  if (card) {
+    const c = state.collections.find((x) => x.id === Number(card.dataset.coll));
+    if (c) setView({ kind: "collection", id: c.id, title: c.name });
+  }
+}
 
 // ------------------------------------------------------------------ chooser
 
@@ -749,6 +858,7 @@ function renderDetailActions() {
       : busy ? `<button class="primary" disabled>Working…</button><button data-act="cancel">Cancel</button>`
       : `<button class="primary" data-act="play">▶ Play</button>`}
     ${!r.installed && !busy && !running ? '<button data-act="install">⭳ Download only</button>' : ""}
+    ${(r.collections ?? []).some((c) => c.isFavorite) ? '<button data-act="unfav" title="Remove from your RomM favourites">★ Favourite</button>' : '<button data-act="fav" title="Add to your RomM favourites">☆ Favourite</button>'}
     ${r.installed && !busy && !running && r.syncSaves && r.saveMode !== "off" ? '<button data-act="sync">⟳ Sync saves</button>' : ""}
     ${r.installed && !busy && !running ? '<button data-act="folder">Open folder</button><button class="danger" data-act="uninstall">Delete local copy</button>' : ""}
     <button data-act="web">Open in RomM</button>`;
@@ -794,6 +904,14 @@ $("#detail").addEventListener("click", async (e) => {
     }
     if (act === "cancel" || act === "stop") await api("game:cancel", r.id);
     if (act === "folder") await api("game:openFolder", r.id);
+    if (act === "fav" || act === "unfav") {
+      const on = await api("collections:setFavorite", r.id, act === "fav");
+      toast(on ? "Added to favourites" : "Removed from favourites", "ok");
+      detailRom = await api("rom:get", r.id);
+      renderDetail();
+      // In "Favourites first" the game's place in the list changes.
+      if (state.sort === "favorite:first" || state.filters.flags.favorite !== undefined) reload();
+    }
     if (act === "addcol" && (await addToCollectionFlow(r.id, r.name, (r.collections ?? []).map((c) => c.id))) && state.detailId === r.id) {
       detailRom = await api("rom:get", r.id);
       renderDetail();
@@ -843,12 +961,12 @@ async function openSettings(tab, focusSlug) {
 }
 
 function renderSettings(focusSlug) {
-  const tabs = [["server", "Server"], ["emulators", "Emulators"], ["platforms", "Platforms"], ["storage", "Storage"], ["tools", "Tools"]];
+  const tabs = [["server", "Server"], ["emulators", "Emulators"], ["platforms", "Platforms"], ["storage", "Storage"], ["appearance", "Appearance"], ["tools", "Tools"]];
   $("#settings").innerHTML = `
     <h1 style="margin-top:0">Settings</h1>
     <div class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${k === settingsTab ? "active" : ""}">${l}</button>`).join("")}</div>
     <div id="tab-body"></div>`;
-  ({ server: renderServer, emulators: renderEmulators, platforms: renderPlatforms, storage: renderStorage, tools: renderTools })[settingsTab](focusSlug);
+  ({ server: renderServer, emulators: renderEmulators, platforms: renderPlatforms, storage: renderStorage, appearance: renderAppearance, tools: renderTools })[settingsTab](focusSlug);
 }
 
 $("#settings").addEventListener("click", (e) => {
@@ -1124,6 +1242,18 @@ function saveModeOrRetro(emuId) {
 }
 
 
+function renderAppearance() {
+  const theme = state.config.theme || "system";
+  $("#tab-body").innerHTML = `
+    <div class="form">
+      <label>Theme</label>
+      <div class="row">${[["system", "Auto (follow Windows)"], ["light", "Light"], ["dark", "Dark"]].map(([v, l]) => `
+        <label style="margin-right:14px"><input type="radio" name="theme" value="${v}" ${theme === v ? "checked" : ""}> ${l}</label>`).join("")}</div>
+      <label></label><div class="hint">Auto switches with Windows' light/dark mode (Settings → Personalisation → Colours).</div>
+    </div>`;
+  $$('[name="theme"]').forEach((r) => r.addEventListener("change", () => save({ theme: r.value }, true)));
+}
+
 async function renderStorage() {
   const c = state.config;
   const info = await api("cache:info");
@@ -1163,7 +1293,7 @@ async function renderStorage() {
 // ------------------------------------------------------------------ tools: MAME names
 
 // Full MAME descriptions by default, e.g. "Dynamite Cop (Export, Model 2B)".
-const mame = { path: "", clean: false, plan: null, platformId: null, busy: false };
+const mame = { path: "", clean: false, tags: { kind: true, mechanical: true, status: true }, plan: null, platformId: null, busy: false };
 
 window.romm.onToolProgress((ev) => {
   const el = $("#t-progress");
@@ -1190,6 +1320,14 @@ async function renderTools() {
       <label></label><label><input type="checkbox" id="t-clean" ${mame.clean ? "checked" : ""}> Shorten names: remove details in brackets at the end, e.g. "(World 910522)"</label>
       <label></label><div class="hint" style="margin-top:-6px">Kept where they tell sets apart: if several games would end up with the same name,
         the parent set gets the short name and its clones keep the full one. Off by default: games get the full MAME name.</div>
+      <label>Add MAME tags</label>
+      <div class="row" style="flex-wrap:wrap;gap:6px 16px">
+        <label><input type="checkbox" data-tag="kind" ${mame.tags.kind ? "checked" : ""}> (Parent) / (Clone) / (BIOS) / (Device)</label>
+        <label><input type="checkbox" data-tag="mechanical" ${mame.tags.mechanical ? "checked" : ""}> (Mechanical)</label>
+        <label><input type="checkbox" data-tag="status" ${mame.tags.status ? "checked" : ""}> (Working) / (Imperfect) / (Not Working)</label>
+      </div>
+      <label></label><div class="hint" style="margin-top:-6px">Appended to the name, e.g. <i>Street Fighter III: New Generation (Europe 970204) (Parent) (Working)</i>.
+        Mechanical and emulation status need a <code>mame -listxml</code> file; many DATs leave them out.</div>
       <label></label><div class="row"><button class="primary" id="t-preview" ${mame.busy ? "disabled" : ""}>Preview changes</button></div>
     </div>
     <div class="progress" id="t-progress" style="margin:14px 0;max-width:760px" hidden></div>
@@ -1199,6 +1337,7 @@ async function renderTools() {
 
   $("#t-platform").addEventListener("change", (e) => { mame.platformId = Number(e.target.value); mame.plan = null; $("#t-result").innerHTML = ""; });
   $("#t-clean").addEventListener("change", (e) => { mame.clean = e.target.checked; });
+  $$("[data-tag]").forEach((cb) => cb.addEventListener("change", () => { mame.tags[cb.dataset.tag] = cb.checked; }));
   $("#t-browse").addEventListener("click", async () => {
     const path = await api("tools:pickMameXml");
     if (path) { mame.path = path; $("#t-file").value = path; }
@@ -1224,7 +1363,7 @@ async function previewRenames() {
   $("#t-preview").disabled = true;
   $("#t-result").innerHTML = "";
   try {
-    mame.plan = await api("tools:mamePlan", mame.platformId, mame.path, mame.clean);
+    mame.plan = await api("tools:mamePlan", mame.platformId, mame.path, mame.clean, Object.keys(mame.tags).filter((k) => mame.tags[k]));
     mame.plan.rows.forEach((r) => (r.selected = true));
     renderPlan();
   } catch (error) {
@@ -1245,6 +1384,13 @@ function renderPlan() {
     <div class="emu" style="max-width:none">
       <div><b>${p.games}</b> games on the platform · <b>${p.matched}</b> found in the file (${p.machinesInFile} entries) ·
         ${p.unchanged} already have that name · <b>${p.rows.length}</b> to rename${p.games - p.matched ? ` · ${p.games - p.matched} not in the file (left alone)` : ""}</div>
+      ${(() => {
+        const gaps = [];
+        if (mame.tags.mechanical && !p.features?.mechanical) gaps.push("(Mechanical)");
+        if (mame.tags.status && !p.features?.driverStatus) gaps.push("(Working) / (Imperfect) / (Not Working)");
+        if (mame.tags.kind && !p.features?.device) gaps.push("(Device)");
+        return gaps.length ? `<div class="hint" style="margin-top:4px">This file has no information for ${gaps.join(", ")}, so those tags are not added. A <code>mame -listxml</code> file has it.</div>` : "";
+      })()}
       ${p.rows.length ? `
       <div class="row" style="margin:12px 0">
         <input id="t-filter" type="search" placeholder="Filter…" style="max-width:260px">

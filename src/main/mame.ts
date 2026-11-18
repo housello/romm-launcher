@@ -19,6 +19,20 @@ export interface MameEntry {
   year: string;
   manufacturer: string;
   cloneof: string;
+  isbios: boolean;
+  isdevice: boolean;
+  ismechanical: boolean;
+  /** runnable="no": a device or part that cannot be started on its own. */
+  runnable: boolean;
+  /** <driver status="good|imperfect|preliminary">, "" when the file has none. */
+  driverStatus: string;
+}
+
+/** Which optional MAME attributes the file carries at all (DATs often leave some out). */
+export interface FileFeatures {
+  device: boolean;
+  mechanical: boolean;
+  driverStatus: boolean;
 }
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
@@ -41,8 +55,9 @@ const child = (block: string, name: string) => {
  * Read the entries for `wanted` short names (lower-case) out of a MAME XML/DAT.
  * Streams the file; memory stays proportional to the matches, not the file.
  */
-export async function readMameXml(path: string, wanted: Set<string>, onProgress?: (fraction: number) => void): Promise<{ entries: Map<string, MameEntry>; machines: number }> {
+export async function readMameXml(path: string, wanted: Set<string>, onProgress?: (fraction: number) => void): Promise<{ entries: Map<string, MameEntry>; machines: number; features: FileFeatures }> {
   const entries = new Map<string, MameEntry>();
+  const features: FileFeatures = { device: false, mechanical: false, driverStatus: false };
   let machines = 0;
   let buffer = "";
   let read = 0;
@@ -72,13 +87,23 @@ export async function readMameXml(path: string, wanted: Set<string>, onProgress?
       const name = attr(open, "name").toLowerCase();
       if (name && wanted.has(name)) {
         const body = buffer.slice(start.lastIndex, close);
+        const status = body.match(/<driver\s[^>]*\bstatus\s*=\s*"([^"]*)"/);
         entries.set(name, {
           description: child(body, "description"),
           year: child(body, "year"),
           manufacturer: child(body, "manufacturer"),
           cloneof: attr(open, "cloneof"),
+          isbios: attr(open, "isbios") === "yes",
+          isdevice: attr(open, "isdevice") === "yes",
+          ismechanical: attr(open, "ismechanical") === "yes",
+          runnable: attr(open, "runnable") !== "no",
+          driverStatus: status ? status[1]!.toLowerCase() : "",
         });
       }
+      // Whole-file features, from every entry (not only the matched ones).
+      if (/\sisdevice\s*=/.test(open)) features.device = true;
+      if (/\sismechanical\s*=/.test(open)) features.mechanical = true;
+      if (!features.driverStatus && buffer.slice(start.lastIndex, close).includes("<driver ")) features.driverStatus = true;
       consumed = close + tagName.length + 3;
       start.lastIndex = consumed;
     }
@@ -109,7 +134,7 @@ export async function readMameXml(path: string, wanted: Set<string>, onProgress?
     stream.on("error", reject);
   });
   if (machines === 0) throw new Error("No <machine> or <game> entries found: is this a MAME XML / DAT file?");
-  return { entries, machines };
+  return { entries, machines, features };
 }
 
 /** "Street Fighter II: The World Warrior (World 910522)" → "Street Fighter II: The World Warrior" */
@@ -159,25 +184,46 @@ async function platformRoms(platformId: number, onProgress?: (done: number, tota
 
 const shortName = (rom: RawRom) => (rom.fs_name_no_ext || basename(rom.fs_name, extname(rom.fs_name))).trim().toLowerCase();
 
+/** Groups of MAME tags that can be appended to names, e.g. "(Parent) (Working)". */
+export type TagGroup = "kind" | "mechanical" | "status";
+
+/** The tags for a set, in a fixed order: kind, mechanical, emulation status. */
+export function tagsFor(e: MameEntry, groups: TagGroup[]): string[] {
+  const out: string[] = [];
+  if (groups.includes("kind")) {
+    if (e.isbios) out.push("BIOS");
+    else if (e.isdevice || !e.runnable) out.push("Device");
+    else out.push(e.cloneof ? "Clone" : "Parent");
+  }
+  if (groups.includes("mechanical") && e.ismechanical) out.push("Mechanical");
+  if (groups.includes("status")) {
+    if (e.driverStatus === "good") out.push("Working");
+    else if (e.driverStatus === "imperfect") out.push("Imperfect");
+    else if (e.driverStatus === "preliminary") out.push("Not Working");
+  }
+  return out;
+}
+
 export interface PlanResult {
   rows: RenameRow[];
   games: number;
   matched: number;
   unchanged: number;
   machinesInFile: number;
+  features: FileFeatures;
 }
 
 export async function buildPlan(
   platformId: number,
   xmlPath: string,
-  options: { clean: boolean },
+  options: { clean: boolean; tags?: TagGroup[] },
   progress: (label: string, fraction: number) => void,
 ): Promise<PlanResult> {
   progress("Reading games from RomM…", 0);
   const roms = await platformRoms(platformId, (done, total) => progress(`Reading games from RomM… ${done}/${total}`, total ? done / total : 0));
   const wanted = new Set(roms.map(shortName));
   progress("Reading MAME file…", 0);
-  const { entries, machines } = await readMameXml(xmlPath, wanted, (f) => progress(`Reading MAME file… ${Math.round(f * 100)}%`, f));
+  const { entries, machines, features } = await readMameXml(xmlPath, wanted, (f) => progress(`Reading MAME file… ${Math.round(f * 100)}%`, f));
 
   const found = roms
     .map((rom) => ({ rom, entry: entries.get(shortName(rom)) }))
@@ -190,13 +236,17 @@ export async function buildPlan(
   const shortKey = (e: MameEntry) => cleanTitle(e.description).toLowerCase();
   const groups = new Map<string, Array<{ rom: RawRom; entry: MameEntry }>>();
   if (options.clean) for (const x of found) groups.set(shortKey(x.entry), [...(groups.get(shortKey(x.entry)) ?? []), x]);
-  const nameFor = (x: { rom: RawRom; entry: MameEntry }) => {
+  const baseName = (x: { rom: RawRom; entry: MameEntry }) => {
     const full = x.entry.description.trim();
     if (!options.clean) return full;
     const group = groups.get(shortKey(x.entry))!;
     if (group.length === 1) return cleanTitle(full);
     const parents = group.filter((g) => !g.entry.cloneof);
     return parents.length === 1 && parents[0] === x ? cleanTitle(full) : full;
+  };
+  const nameFor = (x: { rom: RawRom; entry: MameEntry }) => {
+    const tags = tagsFor(x.entry, options.tags ?? []);
+    return [baseName(x), ...tags.map((t) => `(${t})`)].join(" ");
   };
 
   const rows: RenameRow[] = [];
@@ -221,7 +271,7 @@ export async function buildPlan(
     });
   }
   rows.sort((a, b) => a.file.localeCompare(b.file));
-  return { rows, games: roms.length, matched: found.length, unchanged, machinesInFile: machines };
+  return { rows, games: roms.length, matched: found.length, unchanged, machinesInFile: machines, features };
 }
 
 // ------------------------------------------------------------------ apply

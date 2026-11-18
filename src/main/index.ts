@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { apiFetch, apiGet, ApiError } from "./api";
@@ -30,7 +30,7 @@ function createWindow(): void {
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: "#111318",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#111318" : "#f4f5f8",
     title: "RomM Launcher",
     autoHideMenuBar: true,
     webPreferences: {
@@ -131,9 +131,28 @@ function screenshotsOf(r: any): Array<{ s: string; u: string }> {
 
 const saveRow = (s: any) => ({ id: s.id, name: s.file_name, emulator: s.emulator ?? null, size: s.file_size_bytes ?? 0, updatedAt: s.updated_at ?? null });
 
+async function createCollection(name: string, isPublic: boolean, isFavorite = false): Promise<{ id: number; name: string }> {
+  const boundary = "----romm" + Math.random().toString(16).slice(2);
+  const body = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="name"\r\n\r\n${name}\r\n--${boundary}--\r\n`, "utf8");
+  const q = new URLSearchParams({ is_public: String(isPublic), ...(isFavorite ? { is_favorite: "true" } : {}) });
+  const response = await apiFetch(`/api/collections?${q}`, {
+    method: "POST",
+    headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+    body,
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) throw new Error(`Could not create the collection (HTTP ${response.status}).`);
+  const c = (await response.json()) as { id: number; name: string };
+  return { id: c.id, name: c.name };
+}
+
 function registerIpc(): void {
   handle("config:get", () => publicConfig());
-  handle("config:set", (patch) => updateConfig(patch));
+  handle("config:set", (patch) => {
+    const next = updateConfig(patch);
+    applyTheme();
+    return next;
+  });
 
   handle("server:test", async () => {
     const me = await apiGet<{ username?: string; role?: string }>("/api/users/me");
@@ -169,6 +188,9 @@ function registerIpc(): void {
         name: c.name,
         romCount: c.rom_count ?? c.rom_ids?.length ?? 0,
         isFavorite: !!c.is_favorite,
+        description: c.description ?? "",
+        owner: c.owner_username ?? "",
+        cover: c.path_cover_small || (Array.isArray(c.path_covers_small) ? c.path_covers_small[0] : null) || c.url_cover || null,
         isPublic: !!c.is_public,
         // Only your own collections can be changed; public ones of other users are read-only.
         mine: me.id === undefined || c.user_id === undefined || c.user_id === me.id,
@@ -195,17 +217,7 @@ function registerIpc(): void {
   handle("collections:create", async (name: string, isPublic: boolean) => {
     const clean = String(name ?? "").trim();
     if (!clean) throw new Error("A collection needs a name.");
-    const boundary = "----romm" + Math.random().toString(16).slice(2);
-    const body = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="name"\r\n\r\n${clean}\r\n--${boundary}--\r\n`, "utf8");
-    const response = await apiFetch(`/api/collections?is_public=${isPublic ? "true" : "false"}`, {
-      method: "POST",
-      headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
-      body,
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!response.ok) throw new Error(`Could not create the collection (HTTP ${response.status}).`);
-    const c = (await response.json()) as { id: number; name: string };
-    return { id: c.id, name: c.name };
+    return createCollection(clean, !!isPublic);
   });
 
   const collectionRoms = async (method: "POST" | "DELETE", id: number, romIds: number[]) => {
@@ -223,7 +235,24 @@ function registerIpc(): void {
     }
     return true;
   };
+  handle("collections:delete", async (id: number) => {
+    if (!Number.isInteger(id)) throw new Error("Unknown collection.");
+    const response = await apiFetch(`/api/collections/${id}`, { method: "DELETE", signal: AbortSignal.timeout(30_000) });
+    if (!response.ok) throw new Error(`RomM refused to delete the collection (HTTP ${response.status}).`);
+    return true;
+  });
   handle("collections:addRoms", (id: number, romIds: number[]) => collectionRoms("POST", id, romIds));
+  // ★ Favourite: RomM keeps favourites in a collection of yours flagged is_favorite.
+  handle("collections:setFavorite", async (romId: number, on: boolean) => {
+    const [list, me] = await Promise.all([apiGet<any[]>("/api/collections"), apiGet<{ id?: number }>("/api/users/me")]);
+    let fav = list.find((c) => c.is_favorite && (me.id === undefined || c.user_id === undefined || c.user_id === me.id));
+    if (!fav) {
+      if (!on) return false;
+      fav = await createCollection("Favourites", false, true);
+    }
+    await collectionRoms(on ? "POST" : "DELETE", fav.id, [romId]);
+    return !!on;
+  });
   handle("collections:removeRoms", (id: number, romIds: number[]) => collectionRoms("DELETE", id, romIds));
 
   handle("roms:list", async (params: Record<string, unknown>) => {
@@ -271,7 +300,7 @@ function registerIpc(): void {
       versions: versionsOf(r),
       running: runningGames().includes(id),
       webUrl: `${loadConfig().serverUrl}/rom/${id}`,
-      collections: (Array.isArray(r.user_collections) ? r.user_collections : []).map((c: any) => ({ id: c.id, name: c.name })),
+      collections: (Array.isArray(r.user_collections) ? r.user_collections : []).map((c: any) => ({ id: c.id, name: c.name, isFavorite: !!c.is_favorite })),
       saveMode: resolved ? saveModeOf(resolved.emulator) : "off",
       syncSaves: loadConfig().syncSaves,
       saves: (r.user_saves ?? []).map(saveRow),
@@ -354,7 +383,10 @@ function registerIpc(): void {
     });
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
-  handle("tools:mamePlan", (platformId: number, xmlPath: string, clean: boolean) => buildPlan(platformId, xmlPath, { clean }, toolProgress));
+  handle("tools:mamePlan", (platformId: number, xmlPath: string, clean: boolean, tags: unknown) => {
+    const groups = (Array.isArray(tags) ? tags : []).filter((t): t is "kind" | "mechanical" | "status" => t === "kind" || t === "mechanical" || t === "status");
+    return buildPlan(platformId, xmlPath, { clean, tags: groups }, toolProgress);
+  });
   handle("tools:mameApply", (rows: Array<{ id: number; current: string; proposed: string }>) => {
     const clean = rows
       .filter((r) => Number.isInteger(r.id) && typeof r.proposed === "string" && r.proposed.trim())
@@ -368,7 +400,14 @@ function registerIpc(): void {
   });
 }
 
+/** Light, dark or follow Windows; the page's colours follow via prefers-color-scheme. */
+function applyTheme(): void {
+  const theme = loadConfig().theme;
+  nativeTheme.themeSource = theme === "light" || theme === "dark" ? theme : "system";
+}
+
 app.whenReady().then(() => {
+  applyTheme();
   registerImageProtocol();
   registerIpc();
   createWindow();

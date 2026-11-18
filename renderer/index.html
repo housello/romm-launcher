@@ -15,9 +15,8 @@
       <nav>
         <a data-view="all" class="nav-item">All games</a>
         <a data-view="installed" class="nav-item">Downloaded</a>
+        <a data-view="collections" class="nav-item">Collections</a>
       </nav>
-      <div class="section-title" id="collections-title" hidden>Collections</div>
-      <nav id="collections"></nav>
       <div class="section-title">Platforms</div>
       <nav id="platforms"><div class="muted pad">Loading…</div></nav>
     </div>
@@ -36,6 +35,7 @@
       <select id="sort">
         <option value="name:asc">Name A→Z</option>
         <option value="name:desc">Name Z→A</option>
+        <option value="favorite:first">Favourites first</option>
         <option value="created_at:desc">Recently added</option>
         <option value="first_release_date:desc">Release date</option>
         <option value="fs_size_bytes:desc">Size</option>

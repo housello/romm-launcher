@@ -51,6 +51,8 @@ export interface Config {
   pageSize: number;
   /** Show one card per game, folding other versions (RomM siblings) into it. */
   groupVersions: boolean;
+  /** "system" follows Windows' light/dark mode. */
+  theme: "system" | "light" | "dark";
   /** Pull saves/states from RomM before a launch and push changes after exit. */
   syncSaves: boolean;
   /** Where synced saves live, one folder per game; kept when a game copy is deleted. */
@@ -76,6 +78,7 @@ function defaults(): Config {
     minimizeOnLaunch: true,
     pageSize: 60,
     groupVersions: true,
+    theme: "system",
     syncSaves: true,
     saveDir: join(app.getPath("userData"), "saves"),
     emulators: [],
