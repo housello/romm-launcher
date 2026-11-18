@@ -881,7 +881,8 @@ async function renderStorage() {
 
 // ------------------------------------------------------------------ tools: MAME names
 
-const mame = { path: "", clean: true, plan: null, platformId: null, busy: false };
+// Full MAME descriptions by default, e.g. "Dynamite Cop (Export, Model 2B)".
+const mame = { path: "", clean: false, plan: null, platformId: null, busy: false };
 
 window.romm.onToolProgress((ev) => {
   const el = $("#t-progress");
@@ -899,13 +900,15 @@ async function renderTools() {
     <h2 style="margin-top:0">Rename games from a MAME XML</h2>
     <div class="hint" style="margin-bottom:14px;max-width:820px">Matches each game's file name (e.g. <code>sf2.zip</code>) to a MAME XML or DAT
       (<code>mame -listxml</code>, or a DAT from your ROM set) and sets the RomM name from its description, e.g.
-      <i>sf2</i> → <i>Street Fighter II: The World Warrior</i>. You see every change before anything is written.
+      <i>sf2</i> → <i>Street Fighter II: The World Warrior (World 910522)</i>. You see every change before anything is written.
       Names change on the server, for every user. A later RomM metadata update may set them again.</div>
     <div class="form">
       <label>Platform</label>
       <select id="t-platform">${state.platforms.map((p) => `<option value="${p.id}" ${p.id === mame.platformId ? "selected" : ""}>${esc(p.name)} (${p.romCount})</option>`).join("")}</select>
       <label>MAME XML / DAT</label><div class="row"><input id="t-file" value="${esc(mame.path)}" placeholder="Choose a file…" readonly><button id="t-browse">Browse…</button></div>
-      <label></label><label><input type="checkbox" id="t-clean" ${mame.clean ? "checked" : ""}> Remove details in brackets at the end, e.g. "(World 910522)"</label>
+      <label></label><label><input type="checkbox" id="t-clean" ${mame.clean ? "checked" : ""}> Shorten names: remove details in brackets at the end, e.g. "(World 910522)"</label>
+      <label></label><div class="hint" style="margin-top:-6px">Kept where they tell sets apart: if several games would end up with the same name,
+        the parent set gets the short name and its clones keep the full one. Off by default: games get the full MAME name.</div>
       <label></label><div class="row"><button class="primary" id="t-preview" ${mame.busy ? "disabled" : ""}>Preview changes</button></div>
     </div>
     <div class="progress" id="t-progress" style="margin:14px 0;max-width:760px" hidden></div>

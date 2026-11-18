@@ -179,14 +179,31 @@ export async function buildPlan(
   progress("Reading MAME file…", 0);
   const { entries, machines } = await readMameXml(xmlPath, wanted, (f) => progress(`Reading MAME file… ${Math.round(f * 100)}%`, f));
 
+  const found = roms
+    .map((rom) => ({ rom, entry: entries.get(shortName(rom)) }))
+    .filter((x): x is { rom: RawRom; entry: MameEntry } => !!x.entry?.description);
+
+  // Shortened names must still tell sets apart: when several sets on the platform
+  // shorten to the same title, only the parent set (no cloneof) gets the short
+  // name; clones and look-alikes keep their full description.
+  // e.g. dynamcop → "Dynamite Cop", its clone → "Dynamite Cop (Export, Model 2B)".
+  const shortKey = (e: MameEntry) => cleanTitle(e.description).toLowerCase();
+  const groups = new Map<string, Array<{ rom: RawRom; entry: MameEntry }>>();
+  if (options.clean) for (const x of found) groups.set(shortKey(x.entry), [...(groups.get(shortKey(x.entry)) ?? []), x]);
+  const nameFor = (x: { rom: RawRom; entry: MameEntry }) => {
+    const full = x.entry.description.trim();
+    if (!options.clean) return full;
+    const group = groups.get(shortKey(x.entry))!;
+    if (group.length === 1) return cleanTitle(full);
+    const parents = group.filter((g) => !g.entry.cloneof);
+    return parents.length === 1 && parents[0] === x ? cleanTitle(full) : full;
+  };
+
   const rows: RenameRow[] = [];
-  let matched = 0;
   let unchanged = 0;
-  for (const rom of roms) {
-    const entry = entries.get(shortName(rom));
-    if (!entry || !entry.description) continue;
-    matched++;
-    const proposed = options.clean ? cleanTitle(entry.description) : entry.description.trim();
+  for (const x of found) {
+    const { rom, entry } = x;
+    const proposed = nameFor(x);
     const current = (rom.name ?? "").trim();
     if (proposed === current) {
       unchanged++;
@@ -204,7 +221,7 @@ export async function buildPlan(
     });
   }
   rows.sort((a, b) => a.file.localeCompare(b.file));
-  return { rows, games: roms.length, matched, unchanged, machinesInFile: machines };
+  return { rows, games: roms.length, matched: found.length, unchanged, machinesInFile: machines };
 }
 
 // ------------------------------------------------------------------ apply
