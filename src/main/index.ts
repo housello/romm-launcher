@@ -6,6 +6,7 @@ import { loadConfig, publicConfig, updateConfig } from "./config";
 import { saveModeOf, DEFAULT_CORES, detectRetroArch, listCores, PRESETS } from "./emulators";
 import { clearImageCache, imageCacheSize, registerImageProtocol, registerImageSchemePrivileges } from "./images";
 import { getInstalled, listInstalled } from "./library";
+import { applyRenames, buildPlan, undoInfo, undoLast } from "./mame";
 import { cancel, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
 
 // Portable / test data folder: set ROMM_LAUNCHER_DATA to keep settings elsewhere.
@@ -264,6 +265,28 @@ function registerIpc(): void {
     };
   });
   handle("cache:clearImages", () => clearImageCache());
+
+  // ---- Tools: rename games from a MAME XML / DAT
+  const toolProgress = (label: string, fraction: number) => {
+    if (win && !win.isDestroyed()) win.webContents.send("tool-progress", { label, fraction });
+  };
+  handle("tools:pickMameXml", async () => {
+    const result = await dialog.showOpenDialog(win!, {
+      title: "Choose a MAME XML or DAT",
+      properties: ["openFile"],
+      filters: [{ name: "MAME XML / DAT", extensions: ["xml", "dat"] }, { name: "All files", extensions: ["*"] }],
+    });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+  handle("tools:mamePlan", (platformId: number, xmlPath: string, clean: boolean) => buildPlan(platformId, xmlPath, { clean }, toolProgress));
+  handle("tools:mameApply", (rows: Array<{ id: number; current: string; proposed: string }>) => {
+    const clean = rows
+      .filter((r) => Number.isInteger(r.id) && typeof r.proposed === "string" && r.proposed.trim())
+      .map((r) => ({ id: r.id, current: String(r.current ?? ""), proposed: r.proposed.trim() }));
+    return applyRenames(loadConfig().serverUrl, clean, toolProgress);
+  });
+  handle("tools:mameUndoInfo", () => undoInfo());
+  handle("tools:mameUndo", () => undoLast(loadConfig().serverUrl, toolProgress));
   handle("open:external", (url: string) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
   });

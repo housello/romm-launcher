@@ -562,12 +562,12 @@ async function openSettings(tab, focusSlug) {
 }
 
 function renderSettings(focusSlug) {
-  const tabs = [["server", "Server"], ["emulators", "Emulators"], ["platforms", "Platforms"], ["storage", "Storage"]];
+  const tabs = [["server", "Server"], ["emulators", "Emulators"], ["platforms", "Platforms"], ["storage", "Storage"], ["tools", "Tools"]];
   $("#settings").innerHTML = `
     <h1 style="margin-top:0">Settings</h1>
     <div class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${k === settingsTab ? "active" : ""}">${l}</button>`).join("")}</div>
     <div id="tab-body"></div>`;
-  ({ server: renderServer, emulators: renderEmulators, platforms: renderPlatforms, storage: renderStorage })[settingsTab](focusSlug);
+  ({ server: renderServer, emulators: renderEmulators, platforms: renderPlatforms, storage: renderStorage, tools: renderTools })[settingsTab](focusSlug);
 }
 
 $("#settings").addEventListener("click", (e) => {
@@ -876,6 +876,154 @@ async function renderStorage() {
   $("#g-browse-saves").addEventListener("click", async () => {
     const dir = await api("dialog:pickFolder");
     if (dir) $("#g-saves").value = dir;
+  });
+}
+
+// ------------------------------------------------------------------ tools: MAME names
+
+const mame = { path: "", clean: true, plan: null, platformId: null, busy: false };
+
+window.romm.onToolProgress((ev) => {
+  const el = $("#t-progress");
+  if (!el) return;
+  el.hidden = false;
+  el.innerHTML = `<div class="meta" style="margin-bottom:5px">${esc(ev.label)}</div>
+    <div class="track ${ev.fraction > 0 ? "" : "indet"}"><i style="width:${Math.round(ev.fraction * 100)}%"></i></div>`;
+});
+
+async function renderTools() {
+  const arcade = state.platforms.find((p) => /^(mame|arcade|fbneo|neogeo|cps)/i.test(p.slug));
+  mame.platformId ??= arcade?.id ?? state.platforms[0]?.id ?? null;
+  const undo = await api("tools:mameUndoInfo").catch(() => null);
+  $("#tab-body").innerHTML = `
+    <h2 style="margin-top:0">Rename games from a MAME XML</h2>
+    <div class="hint" style="margin-bottom:14px;max-width:820px">Matches each game's file name (e.g. <code>sf2.zip</code>) to a MAME XML or DAT
+      (<code>mame -listxml</code>, or a DAT from your ROM set) and sets the RomM name from its description, e.g.
+      <i>sf2</i> → <i>Street Fighter II: The World Warrior</i>. You see every change before anything is written.
+      Names change on the server, for every user. A later RomM metadata update may set them again.</div>
+    <div class="form">
+      <label>Platform</label>
+      <select id="t-platform">${state.platforms.map((p) => `<option value="${p.id}" ${p.id === mame.platformId ? "selected" : ""}>${esc(p.name)} (${p.romCount})</option>`).join("")}</select>
+      <label>MAME XML / DAT</label><div class="row"><input id="t-file" value="${esc(mame.path)}" placeholder="Choose a file…" readonly><button id="t-browse">Browse…</button></div>
+      <label></label><label><input type="checkbox" id="t-clean" ${mame.clean ? "checked" : ""}> Remove details in brackets at the end, e.g. "(World 910522)"</label>
+      <label></label><div class="row"><button class="primary" id="t-preview" ${mame.busy ? "disabled" : ""}>Preview changes</button></div>
+    </div>
+    <div class="progress" id="t-progress" style="margin:14px 0;max-width:760px" hidden></div>
+    <div id="t-result"></div>
+    ${undo ? `<div class="emu" style="margin-top:22px;max-width:760px"><b>Last rename:</b> ${undo.count} games on ${esc(new Date(undo.at).toLocaleString())}
+      <button id="t-undo" style="margin-left:10px">Undo</button><div class="hint">Puts back the names those games had before.</div></div>` : ""}`;
+
+  $("#t-platform").addEventListener("change", (e) => { mame.platformId = Number(e.target.value); mame.plan = null; $("#t-result").innerHTML = ""; });
+  $("#t-clean").addEventListener("change", (e) => { mame.clean = e.target.checked; });
+  $("#t-browse").addEventListener("click", async () => {
+    const path = await api("tools:pickMameXml");
+    if (path) { mame.path = path; $("#t-file").value = path; }
+  });
+  $("#t-preview").addEventListener("click", previewRenames);
+  $("#t-undo")?.addEventListener("click", async () => {
+    if (!confirm(`Put back the previous names of ${undo.count} games on the server?`)) return;
+    try {
+      const r = await api("tools:mameUndo");
+      toast(`Restored ${r.restored} names${r.failed ? `, ${r.failed} failed` : ""}.`, r.failed ? "error" : "ok");
+    } catch (error) {
+      toast(error.message, "error");
+    }
+    $("#t-progress").hidden = true;
+    renderTools();
+  });
+  if (mame.plan) renderPlan();
+}
+
+async function previewRenames() {
+  if (!mame.path) return toast("Choose a MAME XML or DAT file first.", "error");
+  mame.busy = true;
+  $("#t-preview").disabled = true;
+  $("#t-result").innerHTML = "";
+  try {
+    mame.plan = await api("tools:mamePlan", mame.platformId, mame.path, mame.clean);
+    mame.plan.rows.forEach((r) => (r.selected = true));
+    renderPlan();
+  } catch (error) {
+    $("#t-result").innerHTML = `<div class="emu" style="color:var(--danger)">${esc(error.message)}</div>`;
+  } finally {
+    mame.busy = false;
+    if ($("#t-preview")) $("#t-preview").disabled = false;
+    if ($("#t-progress")) $("#t-progress").hidden = true;
+  }
+}
+
+function renderPlan() {
+  const p = mame.plan;
+  const box = $("#t-result");
+  if (!box) return;
+  const clones = p.rows.filter((r) => r.clone).length;
+  box.innerHTML = `
+    <div class="emu" style="max-width:none">
+      <div><b>${p.games}</b> games on the platform · <b>${p.matched}</b> found in the file (${p.machinesInFile} entries) ·
+        ${p.unchanged} already have that name · <b>${p.rows.length}</b> to rename${p.games - p.matched ? ` · ${p.games - p.matched} not in the file (left alone)` : ""}</div>
+      ${p.rows.length ? `
+      <div class="row" style="margin:12px 0">
+        <input id="t-filter" type="search" placeholder="Filter…" style="max-width:260px">
+        <button id="t-all">Select all</button><button id="t-none">Select none</button>
+        ${clones ? `<button id="t-noclones">Unselect ${clones} clones</button>` : ""}
+        <div class="spacer"></div>
+        <button class="primary" id="t-apply"></button>
+      </div>
+      <div style="max-height:55vh;overflow:auto;border:1px solid var(--line);border-radius:8px">
+      <table class="platforms" id="t-table">
+        <thead><tr><th style="width:34px"></th><th style="width:16%">File</th><th style="width:30%">Current name</th><th>New name (editable)</th><th style="width:60px">Year</th></tr></thead>
+        <tbody>${p.rows.map((r, i) => `<tr data-i="${i}" data-search="${esc((r.file + " " + r.current + " " + r.proposed).toLowerCase())}">
+          <td><input type="checkbox" data-sel ${r.selected ? "checked" : ""}></td>
+          <td><code>${esc(r.file)}</code>${r.clone ? ' <span class="hint">clone</span>' : ""}</td>
+          <td class="muted">${esc(r.current)}</td>
+          <td><input data-name value="${esc(r.proposed)}" title="${esc(r.description)}"></td>
+          <td class="hint">${esc(r.year)}</td></tr>`).join("")}</tbody>
+      </table></div>` : ""}
+    </div>`;
+  if (!p.rows.length) return;
+  const count = () => {
+    const n = p.rows.filter((r) => r.selected).length;
+    $("#t-apply").textContent = `Rename ${n} game${n === 1 ? "" : "s"} on the server`;
+    $("#t-apply").disabled = n === 0;
+  };
+  count();
+  const table = $("#t-table");
+  table.addEventListener("change", (e) => {
+    const r = p.rows[Number(e.target.closest("tr").dataset.i)];
+    if (e.target.matches("[data-sel]")) r.selected = e.target.checked;
+    if (e.target.matches("[data-name]")) r.proposed = e.target.value;
+    count();
+  });
+  const setAll = (fn) => {
+    $$("#t-table tbody tr").forEach((tr) => {
+      if (tr.hidden) return;
+      const r = p.rows[Number(tr.dataset.i)];
+      r.selected = fn(r);
+      $("[data-sel]", tr).checked = r.selected;
+    });
+    count();
+  };
+  $("#t-all").addEventListener("click", () => setAll(() => true));
+  $("#t-none").addEventListener("click", () => setAll(() => false));
+  $("#t-noclones")?.addEventListener("click", () => setAll((r) => r.selected && !r.clone));
+  $("#t-filter").addEventListener("input", (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    $$("#t-table tbody tr").forEach((tr) => (tr.hidden = !!q && !tr.dataset.search.includes(q)));
+  });
+  $("#t-apply").addEventListener("click", async () => {
+    const rows = p.rows.filter((r) => r.selected && r.proposed.trim() && r.proposed.trim() !== r.current);
+    if (!rows.length) return;
+    if (!confirm(`Rename ${rows.length} games on your RomM server?\n\nThis changes the names for every user. The previous names are saved, and "Undo" puts them back.`)) return;
+    $("#t-apply").disabled = true;
+    try {
+      const result = await api("tools:mameApply", rows.map((r) => ({ id: r.id, current: r.current, proposed: r.proposed })));
+      const failed = result.failed.length;
+      toast(`Renamed ${result.renamed} games${failed ? `; ${failed} failed (${result.failed[0].error})` : ""}.`, failed ? "error" : "ok");
+      mame.plan = null;
+    } catch (error) {
+      toast(error.message, "error");
+    }
+    renderTools();
   });
 }
 

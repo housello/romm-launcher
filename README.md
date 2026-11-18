@@ -116,6 +116,26 @@ on RomM and has a **Sync saves** button.
 
 Uses the `/api/saves` and `/api/states` endpoints (no device registration).
 
+## Renaming arcade games from a MAME XML
+
+Settings → Tools → **Rename games from a MAME XML** sets RomM's game names from a MAME
+XML or DAT (`mame -listxml`, or the DAT that came with your ROM set), e.g. `sf2` →
+*Street Fighter II: The World Warrior*.
+
+1. Choose the platform and the file, then **Preview changes**. Each game's file name
+   (`sf2.zip` → `sf2`) is looked up in the file; the XML is streamed, so a full
+   several-hundred-MB `mame.xml` is fine.
+2. Review the table: untick rows, edit a new name by hand, or **Unselect clones** to rename
+   only parent sets. "Remove details in brackets" turns
+   *Street Fighter II: The World Warrior (World 910522)* into *Street Fighter II: The World Warrior*.
+3. **Rename** writes the names to the server (`PUT /api/roms/{id}` with only the `name` field;
+   RomM keeps the old name as an alternative name). Games not in the file, or already named
+   that way, are left alone.
+4. **Undo** puts back the names of the last run; they are saved before anything is written.
+
+Names change for every user of the server, and a later RomM *Update metadata* scan may replace
+them with the metadata provider's titles. Renaming needs an account allowed to edit games.
+
 ## Not included (yet)
 
 Play-time reporting, 7z extraction, controller navigation, uploading saves while a game is

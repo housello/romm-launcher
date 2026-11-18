@@ -14,6 +14,11 @@ const plain = (value: unknown) => (value === undefined ? undefined : JSON.parse(
 
 contextBridge.exposeInMainWorld("romm", {
   invoke: (channel: string, ...args: unknown[]) => call(channel, ...args.map(plain)),
+  onToolProgress: (listener: (event: unknown) => void) => {
+    const wrapped = (_: unknown, event: unknown) => listener(event);
+    ipcRenderer.on("tool-progress", wrapped);
+    return () => ipcRenderer.removeListener("tool-progress", wrapped);
+  },
   onLaunchEvent: (listener: (event: unknown) => void) => {
     const wrapped = (_: unknown, event: unknown) => listener(event);
     ipcRenderer.on("launch-event", wrapped);
