@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electro
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { apiFetch, apiGet, ApiError } from "./api";
+import { baseDir, dataDir, isPortable, resolvePath, setupDataFolder, toStored } from "./paths";
 import { loadConfig, publicConfig, updateConfig } from "./config";
 import { saveModeOf, DEFAULT_CORES, detectRetroArch, listCores, PRESETS } from "./emulators";
 import { clearImageCache, imageCacheSize, registerImageProtocol, registerImageSchemePrivileges } from "./images";
@@ -9,8 +10,10 @@ import { getInstalled, listInstalled } from "./library";
 import { applyRenames, buildPlan, undoInfo, undoLast } from "./mame";
 import { cancel, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
 
-// Portable / test data folder: set ROMM_LAUNCHER_DATA to keep settings elsewhere.
+// Test data folder: ROMM_LAUNCHER_DATA keeps settings elsewhere. A "portable" file next to the exe
+// moves everything next to it instead (see paths.ts); that wins over ROMM_LAUNCHER_DATA.
 if (process.env.ROMM_LAUNCHER_DATA) app.setPath("userData", process.env.ROMM_LAUNCHER_DATA);
+setupDataFolder();
 
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on("second-instance", () => {
@@ -345,20 +348,22 @@ function registerIpc(): void {
   handle("running:list", () => runningGames());
 
   handle("emulators:presets", () => ({ presets: PRESETS, defaultCores: DEFAULT_CORES }));
-  handle("emulators:detectRetroArch", () => detectRetroArch());
-  handle("emulators:cores", (path: string) => listCores(path));
-  handle("emulators:exists", (path: string) => !!path && existsSync(path));
+  handle("emulators:detectRetroArch", () => { const p = detectRetroArch(); return p ? toStored(p) : null; });
+  handle("emulators:cores", (path: string) => listCores(resolvePath(path)));
+  handle("emulators:exists", (path: string) => !!path && existsSync(resolvePath(path)));
+  handle("app:paths", () => ({ portable: isPortable(), baseDir: baseDir(), dataDir: dataDir() }));
 
   handle("dialog:pickExe", async () => {
     const result = await dialog.showOpenDialog(win!, {
       properties: ["openFile"],
       filters: [{ name: "Programs", extensions: ["exe", "bat", "cmd"] }, { name: "All files", extensions: ["*"] }],
     });
-    return result.canceled ? null : (result.filePaths[0] ?? null);
+    // Inside the launcher's folder (portable), the path is stored relative to it.
+    return result.canceled ? null : toStored(result.filePaths[0] ?? "") || null;
   });
   handle("dialog:pickFolder", async () => {
     const result = await dialog.showOpenDialog(win!, { properties: ["openDirectory", "createDirectory"] });
-    return result.canceled ? null : (result.filePaths[0] ?? null);
+    return result.canceled ? null : toStored(result.filePaths[0] ?? "") || null;
   });
 
   handle("cache:info", async () => {

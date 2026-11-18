@@ -15,10 +15,11 @@ import { existsSync, mkdirSync } from "node:fs";
 import { readFile, writeFile, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { apiFetch, apiSession } from "./api";
+import { dataDir } from "./paths";
 
 export const IMAGE_SCHEME = "romm-img";
 
-const cacheDir = () => join(app.getPath("userData"), "image-cache");
+const cacheDir = () => join(dataDir(), "image-cache");
 
 type Image = { body: Buffer; type: string };
 

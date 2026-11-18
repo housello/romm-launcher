@@ -13,6 +13,7 @@ import { createReadStream, existsSync } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { apiFetch, apiGet } from "./api";
+import { dataDir } from "./paths";
 
 export interface MameEntry {
   description: string;
@@ -276,7 +277,7 @@ export async function buildPlan(
 
 // ------------------------------------------------------------------ apply
 
-const undoFile = () => join(app.getPath("userData"), "mame-rename-undo.json");
+const undoFile = () => join(dataDir(), "mame-rename-undo.json");
 
 interface UndoRecord {
   at: string;
@@ -307,7 +308,7 @@ export async function applyRenames(
 ): Promise<{ renamed: number; failed: Array<{ id: number; error: string }> }> {
   // The undo record is written before anything changes, then kept up to date.
   const record: UndoRecord = { at: new Date().toISOString(), server: serverUrl, renames: [] };
-  await mkdir(app.getPath("userData"), { recursive: true });
+  await mkdir(dataDir(), { recursive: true });
   await writeFile(undoFile(), JSON.stringify(record, null, 1));
   const failed: Array<{ id: number; error: string }> = [];
   for (const [i, row] of rows.entries()) {

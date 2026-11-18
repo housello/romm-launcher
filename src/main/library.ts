@@ -4,6 +4,7 @@
 import { app } from "electron";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { dataDir, resolvePath, toStored } from "./paths";
 
 export interface InstalledGame {
   romId: number;
@@ -32,13 +33,15 @@ export interface InstalledGame {
   lastPlayed: number | null;
 }
 
-const file = () => join(app.getPath("userData"), "installed.json");
+const file = () => join(dataDir(), "installed.json");
 let index: Record<string, InstalledGame> | null = null;
 
 function load(): Record<string, InstalledGame> {
   if (index) return index;
   try {
     index = existsSync(file()) ? JSON.parse(readFileSync(file(), "utf8")) : {};
+    // Folders are stored relative to the exe's folder when portable (drive letters change).
+    for (const g of Object.values(index!)) g.dir = resolvePath(g.dir);
   } catch {
     index = {};
   }
@@ -46,8 +49,9 @@ function load(): Record<string, InstalledGame> {
 }
 
 function persist(): void {
-  mkdirSync(app.getPath("userData"), { recursive: true });
-  writeFileSync(file() + ".tmp", JSON.stringify(load(), null, 2), "utf8");
+  mkdirSync(dataDir(), { recursive: true });
+  const stored = Object.fromEntries(Object.entries(load()).map(([k, g]) => [k, { ...g, dir: toStored(g.dir) }]));
+  writeFileSync(file() + ".tmp", JSON.stringify(stored, null, 2), "utf8");
   renameSync(file() + ".tmp", file());
 }
 

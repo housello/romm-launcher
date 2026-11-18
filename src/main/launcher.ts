@@ -12,6 +12,7 @@ import { loadConfig, type EmulatorDef, type PlatformMapping } from "./config";
 import { buildArgs } from "./emulators";
 import { getInstalled, listInstalled, putInstalled, removeInstalled, type InstalledGame } from "./library";
 import { findChdFolder, isArcade, setNameOf } from "./chd";
+import { resolvePath } from "./paths";
 import { readZipFiles } from "./zip";
 import { describe, gameSaveDir, prepareSaves, pullSaves, pushSaves, type SyncContext } from "./saves";
 
@@ -118,7 +119,8 @@ export function resolveEmulator(slugs: string[]): { emulator: EmulatorDef; mappi
     const mapping = slug ? config.platforms[slug] : undefined;
     if (!mapping) continue;
     const emulator = config.emulators.find((e) => e.id === mapping.emulatorId);
-    if (emulator) return { emulator, mapping };
+    // Emulator paths may be relative to the launcher's folder (portable).
+    if (emulator) return { emulator: { ...emulator, path: resolvePath(emulator.path) }, mapping };
   }
   return null;
 }
@@ -203,9 +205,9 @@ export function platformFolder(slugs: string[]): string {
   const config = loadConfig();
   for (const slug of slugs) {
     const folder = slug ? config.platforms[slug]?.folder?.trim() : "";
-    if (folder) return folder;
+    if (folder) return resolvePath(folder);
   }
-  return join(config.romDir, safeRelative(slugs.find(Boolean) ?? "unknown"));
+  return join(resolvePath(config.romDir), safeRelative(slugs.find(Boolean) ?? "unknown"));
 }
 
 /** True when the file is already there with the expected size (e.g. an existing library folder). */

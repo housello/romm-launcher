@@ -191,6 +191,11 @@ async function loadMore() {
         const rest = await api("roms:list", { ...params, offset: 0, limit: 1, filters: partFilters(false) });
         if (gen !== state.gen) return;
         state.restTotal = rest.total;
+        if (!state.favTotal) {
+          // Favourites belong to a RomM user: say which one, so an empty result is not a mystery.
+          const who = state.config.authType === "basic" && state.config.username ? `RomM user “${state.config.username}”` : "this RomM account";
+          toast(`No favourites here for ${who}. Star games with ☆ Favourite, or sign in as the user whose favourites you want (Settings → Server).`);
+        }
       }
       state.total = (state.favTotal ?? 0) + (state.restTotal ?? 0);
       state.phaseOffset += page.items.length;
@@ -1257,7 +1262,12 @@ function renderAppearance() {
 async function renderStorage() {
   const c = state.config;
   const info = await api("cache:info");
+  const where = await api("app:paths").catch(() => null);
   $("#tab-body").innerHTML = `
+    ${where ? `<div class="hint" style="margin-bottom:14px;max-width:760px">${where.portable
+      ? `<b>Portable mode</b> (a <code>portable</code> file is next to the exe). Everything, including the encrypted login, is in <code>${esc(where.dataDir)}</code>.
+         Relative paths (here, in Emulators and in Platforms) are relative to the launcher's folder <code>${esc(where.baseDir)}</code>, e.g. <code>roms</code> or <code>emulators\\RetroArch\\retroarch.exe</code>.`
+      : `Settings and the encrypted login are in <code>${esc(where.dataDir)}</code>. To keep everything next to the exe instead, put an empty file named <code>portable</code> beside it and restart.`}</div>` : ""}
     <div class="form">
       <label>Game download folder</label><div class="row"><input id="g-dir" value="${esc(c.romDir)}"><button id="g-browse">Browse…</button></div>
       <label></label><div class="hint">Games are kept here after the first play so they start instantly next time. Currently ${info.romCount} games, ${fmtBytes(info.romBytes)}.</div>

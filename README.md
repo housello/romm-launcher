@@ -7,12 +7,38 @@ Unlike the Playnite plugin, nothing is synced: the library is read from the RomM
 page by page as you scroll, so it opens in a couple of seconds whatever the size of
 the collection. The only things stored locally are:
 
-- `launcher-config.json`: server, emulators, platform mapping (password encrypted with Windows DPAPI)
+- `launcher-config.json`: server, emulators, platform mapping (no secrets)
+- `credentials.dat`: the password / token, encrypted with Windows' data protection (not readable text)
 - `installed.json`: the games you downloaded
 - `image-cache/`: cover art, so revisits are instant
 - the downloaded games themselves (default `%APPDATA%\romm-launcher\roms\<platform>\`, configurable per platform)
 
-All under `%APPDATA%\romm-launcher\` (override with the `ROMM_LAUNCHER_DATA` env var).
+All under `%APPDATA%\romm-launcher\`, or next to the exe in portable mode (below).
+
+## Portable mode
+
+Put an empty file named **`portable`** (or `portable.txt`) next to the exe and start it. Then
+everything lives in a **`RomM Launcher Data`** folder beside the exe — settings, the encrypted
+login, the list of downloaded games, save-sync records and caches — and nothing is written to
+AppData. Paths can be relative to the exe's folder, and the defaults are:
+
+```
+RomM Launcher.exe
+portable
+RomM Launcher Data\     settings, login, caches
+roms\<platform>\...     downloaded games
+saves\...               synced saves
+```
+
+Emulators, per-platform download folders and the save folder can be relative too (e.g.
+`emulators\RetroArch\retroarch.exe`); **Browse…** stores a relative path automatically when you pick
+something inside the launcher's folder. Downloaded games are recorded relative to it, so the folder
+keeps working when it moves or the drive letter changes.
+
+On the first portable start, the settings from AppData are copied over (copied, not moved). The
+login is not: it is encrypted per Windows user and data folder, so it is entered once more. For
+the same reason, on another PC or Windows account the launcher asks for the password again;
+everything else carries over. Without the `portable` file, everything stays in AppData.
 
 ## Run
 

@@ -1,10 +1,11 @@
 // Local settings: server connection, emulators, platform → emulator mapping.
-// Stored as a small JSON file in Electron's userData folder. The password is
-// encrypted with the OS keychain (safeStorage) when available.
+// Stored as a small JSON file in the data folder (AppData, or next to the exe in portable mode); the
+// login is kept apart, encrypted (see credentials.dat below).
 
 import { app, safeStorage } from "electron";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { dataDir, isPortable } from "./paths";
 
 export interface EmulatorDef {
   id: string;
@@ -64,7 +65,54 @@ export interface Config {
 /** Shape sent to the renderer: no password, only whether one is set. */
 export type PublicConfig = Omit<Config, "passwordEnc"> & { hasPassword: boolean };
 
-const file = () => join(app.getPath("userData"), "launcher-config.json");
+const file = () => join(dataDir(), "launcher-config.json");
+/**
+ * Password and token live apart from the settings, in credentials.dat next to them:
+ * the whole file is encrypted with Windows' data protection (Electron safeStorage),
+ * so it is not readable text. It can only be decrypted by the same Windows user with
+ * the same data folder; elsewhere the login is simply asked for again.
+ */
+const credentialsFile = () => join(dataDir(), "credentials.dat");
+/** Written by a development build before the switch to the encrypted file. */
+const legacyCredentialsFile = () => join(dataDir(), "credentials.json");
+
+interface Credentials {
+  passwordEnc: string;
+  token: string;
+}
+
+function readCredentials(): Credentials | null {
+  try {
+    if (existsSync(credentialsFile())) {
+      const raw = readFileSync(credentialsFile());
+      // "RLB1" = only obfuscated: this system has no OS encryption (rare on Windows).
+      const text = raw.subarray(0, 4).toString() === "RLB1"
+        ? Buffer.from(raw.subarray(4).toString(), "base64").toString("utf8")
+        : safeStorage.decryptString(raw);
+      const c = JSON.parse(text) as Partial<Credentials>;
+      return { passwordEnc: c.passwordEnc ?? "", token: c.token ?? "" };
+    }
+    if (existsSync(legacyCredentialsFile())) {
+      const c = JSON.parse(readFileSync(legacyCredentialsFile(), "utf8")) as Partial<Credentials>;
+      return { passwordEnc: c.passwordEnc ?? "", token: c.token ?? "" };
+    }
+  } catch (error) {
+    // Another PC / Windows user: the login has to be entered again.
+    console.warn("[config] saved login cannot be decrypted here", error);
+  }
+  return null;
+}
+
+function writeCredentials(c: Credentials): void {
+  mkdirSync(dataDir(), { recursive: true });
+  const text = JSON.stringify(c);
+  const bytes = safeStorage.isEncryptionAvailable()
+    ? safeStorage.encryptString(text)
+    : Buffer.concat([Buffer.from("RLB1"), Buffer.from(Buffer.from(text, "utf8").toString("base64"))]);
+  writeFileSync(credentialsFile() + ".tmp", bytes);
+  renameSync(credentialsFile() + ".tmp", credentialsFile());
+  if (existsSync(legacyCredentialsFile())) rmSync(legacyCredentialsFile(), { force: true });
+}
 
 function defaults(): Config {
   return {
@@ -74,13 +122,14 @@ function defaults(): Config {
     passwordEnc: "",
     token: "",
     allowSelfSigned: false,
-    romDir: join(app.getPath("userData"), "roms"),
+    // Portable: next to the exe (relative); otherwise in AppData.
+    romDir: isPortable() ? "roms" : join(app.getPath("userData"), "roms"),
     minimizeOnLaunch: true,
     pageSize: 60,
     groupVersions: true,
     theme: "system",
     syncSaves: true,
-    saveDir: join(app.getPath("userData"), "saves"),
+    saveDir: isPortable() ? "saves" : join(app.getPath("userData"), "saves"),
     emulators: [],
     platforms: {},
   };
@@ -96,14 +145,20 @@ export function loadConfig(): Config {
   } catch (error) {
     console.error("[config] unreadable, using defaults", error);
   }
-  cached = { ...defaults(), ...stored };
+  const credentials = readCredentials();
+  cached = { ...defaults(), ...stored, ...(credentials ?? {}) };
+  // Settings written before the split still hold the secrets: move them out once.
+  const legacy = (stored.passwordEnc || stored.token) && !credentials;
+  if (legacy || "passwordEnc" in stored || "token" in stored) saveConfig(cached);
   return cached;
 }
 
 export function saveConfig(next: Config): void {
-  mkdirSync(app.getPath("userData"), { recursive: true });
+  const { passwordEnc, token, ...settings } = next;
+  writeCredentials({ passwordEnc, token });
+  mkdirSync(dataDir(), { recursive: true });
   const tmp = file() + ".tmp";
-  writeFileSync(tmp, JSON.stringify(next, null, 2), "utf8");
+  writeFileSync(tmp, JSON.stringify(settings, null, 2), "utf8");
   renameSync(tmp, file());
   cached = next;
 }

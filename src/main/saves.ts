@@ -19,6 +19,7 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 import { apiFetch, apiGet } from "./api";
 import { loadConfig, type EmulatorDef, type PlatformMapping } from "./config";
 import { saveModeOf } from "./emulators";
+import { baseDir, dataDir, resolvePath, toStored } from "./paths";
 
 const MAX_SAVE_BYTES = 512 * 1024 * 1024;
 
@@ -68,7 +69,7 @@ interface Record_ {
   serverUpdatedAt: string;
 }
 
-const recordsFile = () => join(app.getPath("userData"), "save-sync.json");
+const recordsFile = () => join(dataDir(), "save-sync.json");
 let records: Record<string, Record_> | null = null;
 
 function loadRecords(): Record<string, Record_> {
@@ -87,7 +88,7 @@ function saveRecords(): void {
   renameSync(recordsFile() + ".tmp", recordsFile());
 }
 
-const recordKey = (romId: number, target: SaveTarget, name: string) => `${romId}|${target.kind}|${join(target.dir, name).toLowerCase()}`;
+const recordKey = (romId: number, target: SaveTarget, name: string) => `${romId}|${target.kind}|${toStored(join(target.dir, name)).toLowerCase()}`;
 
 // ------------------------------------------------------------------ targets
 
@@ -95,11 +96,11 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Folder for synced saves of one game, outside the (deletable) game folder. */
 export function gameSaveDir(platformSlug: string, romId: number): string {
-  return join(loadConfig().saveDir, platformSlug.replace(/[^\w.-]/g, "_"), String(romId));
+  return join(resolvePath(loadConfig().saveDir), platformSlug.replace(/[^\w.-]/g, "_"), String(romId));
 }
 
 function patternTarget(kind: SaveKind, pattern: string, vars: Record<string, string>): SaveTarget {
-  const resolved = resolve(pattern.replace(/\{(\w+)\}/g, (m, k: string) => vars[k] ?? m));
+  const resolved = resolve(baseDir(), pattern.replace(/\{(\w+)\}/g, (m, k: string) => vars[k] ?? m));
   const dir = dirname(resolved);
   const glob = basename(resolved);
   const re = new RegExp("^" + glob.split("*").map(escapeRe).join(".*") + "$", "i");
