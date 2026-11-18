@@ -32,6 +32,7 @@
       <span id="view-count" class="muted"></span>
       <div class="spacer"></div>
       <input id="view-search" type="search" placeholder="Search…" title="Ctrl+F">
+      <button id="filter-btn" title="RomM filters">Filters <span id="filter-count" class="pill" hidden></span></button>
       <select id="sort">
         <option value="name:asc">Name A→Z</option>
         <option value="name:desc">Name Z→A</option>
@@ -41,9 +42,10 @@
       </select>
       <input id="zoom" type="range" min="120" max="260" value="170" title="Cover size">
     </header>
+    <div id="filter-panel" hidden></div>
     <section id="content">
       <div id="grid"></div>
-      <div id="sentinel"></div>
+      <div id="list-foot"></div>
       <div id="empty" class="empty" hidden></div>
     </section>
     <section id="settings" hidden></section>

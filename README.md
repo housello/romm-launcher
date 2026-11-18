@@ -71,6 +71,17 @@ with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers
 - **Downloaded** in the sidebar lists local games. Delete a local copy from the detail panel.
 - **Search**: the box above the grid (Ctrl+F) searches the current platform or collection;
   the sidebar box (Ctrl+Shift+F) searches the whole library.
+- **Large libraries** load page by page as you scroll; the footer shows how much is loaded,
+  has a **Load more** button, and shows an error with **Retry** if a page fails.
+- **Filters** (toolbar): the RomM server's own filters for the current view. Yes/No switches
+  (favourites, matched, played, has saves/states, RetroAchievements, duplicates, verified,
+  missing files) and searchable lists filled from your library (genres, franchises, series,
+  companies, developers, publishers, players, age ratings, regions, languages, your status,
+  tags). Filters stay on when you switch platform; **Clear all** resets them.
+- **Collections**: right-click a game, or use **+ Add to collection** in its detail panel, to
+  add it to one of your RomM collections or a new one (private or public). The detail panel
+  lists the game's collections; ✕ removes it from one. Collections belong to the RomM user the
+  launcher signs in with; public collections of other users are listed but read-only.
 
 ### Where games are downloaded
 

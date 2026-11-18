@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { apiGet, ApiError } from "./api";
+import { apiFetch, apiGet, ApiError } from "./api";
 import { loadConfig, publicConfig, updateConfig } from "./config";
 import { saveModeOf, DEFAULT_CORES, detectRetroArch, listCores, PRESETS } from "./emulators";
 import { clearImageCache, imageCacheSize, registerImageProtocol, registerImageSchemePrivileges } from "./images";
@@ -65,6 +65,25 @@ function handle(channel: string, fn: (...args: any[]) => unknown): void {
   });
 }
 
+/** Yes/no filters RomM's /api/roms understands. */
+const FLAG_FILTERS = ["favorite", "matched", "duplicate", "has_saves", "has_states", "has_ra", "verified", "missing", "last_played", "playable"];
+/** Multi-value filters: repeated query keys (genres=a&genres=b). */
+const LIST_FILTERS = ["genres", "franchises", "collections", "companies", "publishers", "developers", "age_ratings", "player_counts", "regions", "languages", "statuses", "tags"];
+
+function appendFilters(q: URLSearchParams, filters: unknown): void {
+  if (!filters || typeof filters !== "object") return;
+  const { flags, lists } = filters as { flags?: Record<string, unknown>; lists?: Record<string, unknown> };
+  for (const key of FLAG_FILTERS) {
+    const v = flags?.[key];
+    if (v === true || v === false) q.append(key, String(v));
+  }
+  for (const key of LIST_FILTERS) {
+    const values = lists?.[key];
+    if (!Array.isArray(values)) continue;
+    for (const v of values) if (typeof v === "string" && v) q.append(key, v);
+  }
+}
+
 function romQuery(params: Record<string, unknown>): string {
   const q = new URLSearchParams();
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? String(v) : null);
@@ -76,7 +95,7 @@ function romQuery(params: Record<string, unknown>): string {
   const collection = num(params.collectionId);
   if (collection) q.append("collection_id", collection);
   if (typeof params.search === "string" && params.search.trim()) q.append("search_term", params.search.trim());
-  if (params.favourite) q.append("favourite", "true");
+  appendFilters(q, params.filters);
   // One card per game: RomM folds other versions (regions, revisions) into sibling_roms.
   if (loadConfig().groupVersions) q.append("group_by_meta_id", "true");
   q.append("limit", num(params.limit) ?? String(loadConfig().pageSize));
@@ -144,12 +163,68 @@ function registerIpc(): void {
 
   handle("collections:list", async () => {
     try {
-      const list = await apiGet<any[]>("/api/collections");
-      return list.map((c) => ({ id: c.id, name: c.name, romCount: c.rom_count ?? c.rom_ids?.length ?? 0 }));
+      const [list, me] = await Promise.all([apiGet<any[]>("/api/collections"), apiGet<{ id?: number }>("/api/users/me").catch(() => ({}) as { id?: number })]);
+      return list.map((c) => ({
+        id: c.id,
+        name: c.name,
+        romCount: c.rom_count ?? c.rom_ids?.length ?? 0,
+        isFavorite: !!c.is_favorite,
+        isPublic: !!c.is_public,
+        // Only your own collections can be changed; public ones of other users are read-only.
+        mine: me.id === undefined || c.user_id === undefined || c.user_id === me.id,
+      }));
     } catch {
       return [];
     }
   });
+
+  // Values for the filter menus, for the current view (only what occurs there).
+  handle("roms:filterValues", async (params: { platformId?: number; collectionId?: number }) => {
+    const q = new URLSearchParams({ limit: "1", offset: "0", with_filter_values: "true" });
+    if (typeof params?.platformId === "number") q.append("platform_ids", String(params.platformId));
+    if (typeof params?.collectionId === "number") q.append("collection_id", String(params.collectionId));
+    const body = await apiGet<{ filter_values?: Record<string, unknown> }>(`/api/roms?${q}`);
+    const out: Record<string, string[]> = {};
+    for (const key of LIST_FILTERS) {
+      const v = body.filter_values?.[key];
+      if (Array.isArray(v)) out[key] = v.filter((x): x is string => typeof x === "string" && x.length > 0);
+    }
+    return out;
+  });
+
+  handle("collections:create", async (name: string, isPublic: boolean) => {
+    const clean = String(name ?? "").trim();
+    if (!clean) throw new Error("A collection needs a name.");
+    const boundary = "----romm" + Math.random().toString(16).slice(2);
+    const body = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="name"\r\n\r\n${clean}\r\n--${boundary}--\r\n`, "utf8");
+    const response = await apiFetch(`/api/collections?is_public=${isPublic ? "true" : "false"}`, {
+      method: "POST",
+      headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+      body,
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error(`Could not create the collection (HTTP ${response.status}).`);
+    const c = (await response.json()) as { id: number; name: string };
+    return { id: c.id, name: c.name };
+  });
+
+  const collectionRoms = async (method: "POST" | "DELETE", id: number, romIds: number[]) => {
+    const ids = (Array.isArray(romIds) ? romIds : []).filter((x) => Number.isInteger(x));
+    if (!Number.isInteger(id) || !ids.length) throw new Error("Nothing to change.");
+    const response = await apiFetch(`/api/collections/${id}/roms`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rom_ids: ids }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) {
+      const hint = response.status === 403 ? " (only the owner can change a collection)" : "";
+      throw new Error(`RomM refused the change (HTTP ${response.status})${hint}.`);
+    }
+    return true;
+  };
+  handle("collections:addRoms", (id: number, romIds: number[]) => collectionRoms("POST", id, romIds));
+  handle("collections:removeRoms", (id: number, romIds: number[]) => collectionRoms("DELETE", id, romIds));
 
   handle("roms:list", async (params: Record<string, unknown>) => {
     const body = await apiGet<any>(`/api/roms?${romQuery(params ?? {})}`);
@@ -196,6 +271,7 @@ function registerIpc(): void {
       versions: versionsOf(r),
       running: runningGames().includes(id),
       webUrl: `${loadConfig().serverUrl}/rom/${id}`,
+      collections: (Array.isArray(r.user_collections) ? r.user_collections : []).map((c: any) => ({ id: c.id, name: c.name })),
       saveMode: resolved ? saveModeOf(resolved.emulator) : "off",
       syncSaves: loadConfig().syncSaves,
       saves: (r.user_saves ?? []).map(saveRow),

@@ -123,6 +123,7 @@ function setView(view, search = "") {
   $("#view-title").textContent = view.title;
   markActive();
   reload();
+  if (!$("#filter-panel").hidden) toggleFilterPanel(true);
 }
 
 function reload() {
@@ -132,13 +133,16 @@ function reload() {
   state.loading = false;
   state.offset = 0;
   state.done = false;
+  state.error = null;
   state.total = 0;
+  state.shown = 0;
   state.seen = new Set(); // ids already shown, including folded versions
   state.items = new Map(); // id -> list item, for the version chooser
   $("#grid").innerHTML = "";
   $("#empty").hidden = true;
   $("#view-count").textContent = "";
   $("#content").scrollTop = 0;
+  renderListFoot();
   if (state.view.kind === "installed") return renderInstalled();
   loadMore();
 }
@@ -146,14 +150,15 @@ function reload() {
 async function loadMore() {
   if (state.loading || state.done || state.view.kind === "installed") return;
   state.loading = true;
+  state.error = null;
   const gen = state.gen;
   const [orderBy, orderDir] = state.sort.split(":");
-  const params = { offset: state.offset, limit: state.config.pageSize || 60, search: state.search, orderBy, orderDir };
+  const params = { offset: state.offset, limit: state.config.pageSize || 60, search: state.search, orderBy, orderDir, filters: activeFilters() };
   if (state.view.kind === "platform") params.platformId = state.view.id;
   if (state.view.kind === "collection") params.collectionId = state.view.id;
-  if (state.view.kind === "favourites") params.favourite = true;
   const firstPage = state.offset === 0;
   if (firstPage) showLoading();
+  renderListFoot();
   try {
     const page = await api("roms:list", params);
     if (gen !== state.gen) return;
@@ -169,19 +174,62 @@ async function loadMore() {
       state.items.set(item.id, item);
       return true;
     });
+    state.shown += fresh.length;
     $("#grid").insertAdjacentHTML("beforeend", fresh.map(cardHtml).join(""));
     $("#view-count").textContent = `${page.total} games`;
-    if (state.offset === 0) showEmpty(state.search ? "No games match your search." : "Nothing here.");
+    if (state.offset === 0) showEmpty(state.search || activeFilterCount() ? "No games match your search and filters." : "Nothing here.");
   } catch (error) {
     if (gen !== state.gen) return;
-    state.done = true;
-    if (state.offset === 0) showEmpty(error.message, true, true);
-    else toast(`Could not load more games: ${error.message}`, "error");
+    if (firstPage) {
+      state.done = true;
+      showEmpty(error.message, true, true);
+    } else {
+      // Not "done": the footer shows the error with a Retry button.
+      state.error = error.message;
+    }
   } finally {
-    if (gen === state.gen) state.loading = false;
+    if (gen === state.gen) {
+      state.loading = false;
+      renderListFoot();
+    }
   }
-  // Keep filling if the sentinel is still visible (big screens).
-  if (gen === state.gen && !state.done && isSentinelVisible()) loadMore();
+  // The new page may not fill the screen (or the user kept scrolling meanwhile).
+  if (gen === state.gen && !state.error) requestAnimationFrame(maybeLoadMore);
+}
+
+/** Load the next page when the end of the list is near. One measure, checked on every scroll. */
+function maybeLoadMore() {
+  if (state.loading || state.done || state.error || state.view.kind === "installed" || $("#content").hidden) return;
+  const c = $("#content");
+  if (c.scrollHeight - c.scrollTop - c.clientHeight < 1200) loadMore();
+}
+
+let scrollQueued = false;
+$("#content").addEventListener("scroll", () => {
+  if (scrollQueued) return;
+  scrollQueued = true;
+  requestAnimationFrame(() => {
+    scrollQueued = false;
+    maybeLoadMore();
+  });
+}, { passive: true });
+window.addEventListener("resize", () => maybeLoadMore());
+
+/** Footer under the grid: progress, a manual "Load more", and errors with Retry. */
+function renderListFoot() {
+  const foot = $("#list-foot");
+  if (!foot) return;
+  if (state.view.kind === "installed" || state.offset === 0 && !state.loading) {
+    foot.innerHTML = "";
+    return;
+  }
+  const counted = state.total ? `Loaded ${Math.min(state.offset, state.total).toLocaleString()} of ${state.total.toLocaleString()}` : "";
+  if (state.loading && state.offset > 0) foot.innerHTML = `<span class="muted">${counted} · Loading…</span>`;
+  else if (state.error) foot.innerHTML = `<span style="color:var(--danger)">Could not load more games: ${esc(state.error)}</span> <button id="foot-retry">Retry</button>`;
+  else if (!state.done) foot.innerHTML = `<span class="muted">${counted}</span> <button id="foot-more">Load more</button>`;
+  else foot.innerHTML = state.total > state.config.pageSize ? `<span class="muted">All ${state.total.toLocaleString()} games loaded</span>` : "";
+  $("#foot-retry")?.addEventListener("click", () => { state.error = null; loadMore(); });
+  $("#foot-more")?.addEventListener("click", () => loadMore());
 }
 
 function showEmpty(message, withSettings, withRetry) {
@@ -196,15 +244,6 @@ function showLoading() {
   $("#empty").hidden = false;
   $("#empty").innerHTML = '<p class="muted">Loading…</p>';
 }
-
-function isSentinelVisible() {
-  const r = $("#sentinel").getBoundingClientRect();
-  return r.top < window.innerHeight + 600;
-}
-
-new IntersectionObserver((entries) => {
-  if (entries.some((e) => e.isIntersecting)) loadMore();
-}, { root: $("#content"), rootMargin: "800px" }).observe($("#sentinel"));
 
 async function renderInstalled() {
   const games = await api("installed:list");
@@ -263,7 +302,10 @@ $("#view-search").addEventListener("input", () => {
   }, 300);
 });
 $("#sort").addEventListener("change", () => { state.sort = $("#sort").value; reload(); });
-$("#zoom").addEventListener("input", () => document.documentElement.style.setProperty("--card", $("#zoom").value + "px"));
+$("#zoom").addEventListener("input", () => {
+  document.documentElement.style.setProperty("--card", $("#zoom").value + "px");
+  maybeLoadMore();
+});
 document.addEventListener("keydown", (e) => {
   if (e.ctrlKey && e.key.toLowerCase() === "f") {
     e.preventDefault();
@@ -273,6 +315,222 @@ document.addEventListener("keydown", (e) => {
     box.select();
   }
   if (e.key === "Escape") closeDetail();
+});
+
+// ------------------------------------------------------------------ filters (RomM server-side)
+
+const FLAG_FILTERS = [
+  ["favorite", "Favourites"], ["matched", "Matched to metadata"], ["last_played", "Played"],
+  ["has_saves", "Has saves"], ["has_states", "Has save states"], ["has_ra", "RetroAchievements"],
+  ["duplicate", "Duplicates"], ["verified", "Verified"], ["missing", "Missing files"],
+];
+const LIST_FILTERS = [
+  ["genres", "Genres"], ["franchises", "Franchises"], ["collections", "Series"], ["companies", "Companies"],
+  ["developers", "Developers"], ["publishers", "Publishers"], ["player_counts", "Players"],
+  ["age_ratings", "Age ratings"], ["regions", "Regions"], ["languages", "Languages"], ["statuses", "My status"], ["tags", "Tags"],
+];
+const STATUS_LABELS = { incomplete: "Incomplete", finished: "Finished", completed_100: "Completed 100%", retired: "Retired", never_playing: "Never playing" };
+
+state.filters = { flags: {}, lists: {} };
+const filterValueCache = new Map();
+
+function activeFilters() {
+  return state.filters;
+}
+function activeFilterCount() {
+  return Object.values(state.filters.flags).filter((v) => v === true || v === false).length
+    + Object.values(state.filters.lists).reduce((n, l) => n + l.length, 0);
+}
+function updateFilterButton() {
+  const n = activeFilterCount();
+  $("#filter-count").hidden = n === 0;
+  $("#filter-count").textContent = n;
+  $("#filter-btn").classList.toggle("on", n > 0);
+}
+
+let filterTimer = 0;
+function filtersChanged() {
+  updateFilterButton();
+  clearTimeout(filterTimer);
+  filterTimer = setTimeout(() => { if (state.view.kind !== "installed") reload(); }, 350);
+}
+
+async function filterValuesForView() {
+  const v = state.view;
+  const key = `${v.kind}:${v.id ?? ""}`;
+  if (!filterValueCache.has(key)) {
+    const params = {};
+    if (v.kind === "platform") params.platformId = v.id;
+    if (v.kind === "collection") params.collectionId = v.id;
+    filterValueCache.set(key, api("roms:filterValues", params).catch((e) => { filterValueCache.delete(key); throw e; }));
+  }
+  const values = { ...(await filterValueCache.get(key)) };
+  values.statuses = Object.keys(STATUS_LABELS);
+  return values;
+}
+
+async function toggleFilterPanel(force) {
+  const panel = $("#filter-panel");
+  const open = force ?? panel.hidden;
+  panel.hidden = !open;
+  if (!open) return;
+  if (state.view.kind === "installed") {
+    panel.innerHTML = '<div class="muted">Filters apply to your RomM library; the Downloaded view only searches by name.</div>';
+    return;
+  }
+  panel.innerHTML = '<div class="muted">Loading filters…</div>';
+  try {
+    renderFilterPanel(await filterValuesForView());
+  } catch (error) {
+    panel.innerHTML = `<div style="color:var(--danger)">${esc(error.message)}</div>`;
+  }
+}
+
+function renderFilterPanel(values) {
+  const f = state.filters;
+  const label = (key, v) => (key === "statuses" ? STATUS_LABELS[v] ?? v : v);
+  $("#filter-panel").innerHTML = `
+    <div class="fp-head">
+      <b>Filters</b><span class="muted">Applied by your RomM server to this view</span><div class="spacer"></div>
+      <button id="fp-clear" ${activeFilterCount() ? "" : "disabled"}>Clear all</button><button id="fp-close" title="Close">✕</button>
+    </div>
+    <div class="fp-flags">${FLAG_FILTERS.map(([k, l]) => `
+      <label>${esc(l)}<select data-flag="${k}">
+        <option value="">Any</option><option value="true" ${f.flags[k] === true ? "selected" : ""}>Yes</option><option value="false" ${f.flags[k] === false ? "selected" : ""}>No</option>
+      </select></label>`).join("")}</div>
+    <div class="fp-lists">${LIST_FILTERS.map(([k, l]) => {
+      const selected = f.lists[k] ?? [];
+      const opts = [...new Set([...selected, ...(values[k] ?? [])])];
+      if (!opts.length) return "";
+      return `<details data-list="${k}" ${selected.length ? "open" : ""}>
+        <summary>${esc(l)} <span class="muted">${selected.length ? `(${selected.length} selected)` : `(${opts.length})`}</span></summary>
+        ${opts.length > 8 ? '<input type="search" class="fp-search" placeholder="Find…">' : ""}
+        <div class="opts">${opts.map((v) => `<label data-v="${esc(String(v).toLowerCase())}"><input type="checkbox" value="${esc(v)}" ${selected.includes(v) ? "checked" : ""}> ${esc(label(k, v))}</label>`).join("")}</div>
+      </details>`;
+    }).join("")}</div>`;
+}
+
+$("#filter-panel").addEventListener("change", (e) => {
+  const flag = e.target.dataset.flag;
+  if (flag) {
+    const v = e.target.value;
+    if (v === "") delete state.filters.flags[flag];
+    else state.filters.flags[flag] = v === "true";
+    return filtersChanged();
+  }
+  const list = e.target.closest("details")?.dataset.list;
+  if (list && e.target.type === "checkbox") {
+    const cur = new Set(state.filters.lists[list] ?? []);
+    if (e.target.checked) cur.add(e.target.value);
+    else cur.delete(e.target.value);
+    if (cur.size) state.filters.lists[list] = [...cur];
+    else delete state.filters.lists[list];
+    const box = e.target.closest("details");
+    $("summary .muted", box).textContent = cur.size ? `(${cur.size} selected)` : `(${$$(".opts label", box).length})`;
+    $("#fp-clear").disabled = activeFilterCount() === 0;
+    filtersChanged();
+  }
+});
+$("#filter-panel").addEventListener("input", (e) => {
+  if (!e.target.matches(".fp-search")) return;
+  const q = e.target.value.trim().toLowerCase();
+  $$(".opts label", e.target.closest("details")).forEach((l) => (l.hidden = !!q && !l.dataset.v.includes(q)));
+});
+$("#filter-panel").addEventListener("click", (e) => {
+  if (e.target.id === "fp-close") toggleFilterPanel(false);
+  if (e.target.id === "fp-clear") {
+    state.filters = { flags: {}, lists: {} };
+    filtersChanged();
+    toggleFilterPanel(true);
+  }
+});
+$("#filter-btn").addEventListener("click", () => toggleFilterPanel());
+
+// ------------------------------------------------------------------ collections
+
+/** Small text-input dialog (Electron has no window.prompt). Resolves to { text, checked } or null. */
+function askText({ title, message = "", placeholder = "", okLabel = "OK", checkbox = "" }) {
+  return new Promise((resolve) => {
+    const box = $("#chooser");
+    box.innerHTML = `<div class="box" role="dialog" aria-modal="true">
+      <h2>${esc(title)}</h2>${message ? `<div class="msg">${esc(message)}</div>` : ""}
+      <div style="padding:4px 20px 0"><input id="ask-text" style="width:100%" placeholder="${esc(placeholder)}">
+      ${checkbox ? `<label style="display:block;margin-top:10px"><input type="checkbox" id="ask-check"> ${esc(checkbox)}</label>` : ""}</div>
+      <div class="foot"><button data-x>Cancel</button><button class="primary" data-ok>${esc(okLabel)}</button></div></div>`;
+    box.hidden = false;
+    $("#ask-text").focus();
+    const finish = (value) => {
+      box.hidden = true;
+      box.innerHTML = "";
+      document.removeEventListener("keydown", onKey, true);
+      resolve(value);
+    };
+    const ok = () => {
+      const text = $("#ask-text").value.trim();
+      if (text) finish({ text, checked: !!$("#ask-check")?.checked });
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.stopPropagation(); finish(null); }
+      if (e.key === "Enter") { e.preventDefault(); ok(); }
+    };
+    document.addEventListener("keydown", onKey, true);
+    box.onclick = (e) => {
+      if (e.target.matches("[data-ok]")) ok();
+      else if (e.target.matches("[data-x]") || e.target === box) finish(null);
+    };
+  });
+}
+
+/** Add a game to one of your collections (or a new one). Resolves true when something changed. */
+async function addToCollectionFlow(romId, romName, alreadyIn = []) {
+  let cols;
+  try {
+    cols = (await api("collections:list")).filter((c) => c.mine && !alreadyIn.includes(c.id));
+  } catch (error) {
+    toast(error.message, "error");
+    return false;
+  }
+  const items = cols.map((c) => ({ value: c.id, label: c.name, sub: `${c.romCount} games${c.isPublic ? " · public" : ""}${c.isFavorite ? " · favourites" : ""}` }));
+  items.push({ value: "__new", label: "+ New collection…" });
+  if (state.view.kind === "collection" && state.collections.some((c) => c.id === state.view.id && c.mine !== false)) {
+    items.push({ value: "__remove", label: `− Remove from “${state.view.title}”` });
+  }
+  const pick = await choose({ title: "Add to collection", message: romName, items, selected: items[0].value, okLabel: "OK" });
+  if (pick === null) return false;
+  try {
+    if (pick === "__remove") {
+      await api("collections:removeRoms", state.view.id, [romId]);
+      toast(`Removed from “${state.view.title}”`, "ok");
+      $(`.card[data-id="${romId}"]`)?.remove();
+      loadSidebar();
+      return true;
+    }
+    let id = pick;
+    let name = cols.find((c) => c.id === pick)?.name;
+    if (pick === "__new") {
+      const answer = await askText({ title: "New collection", message: `“${romName}” will be added to it.`, placeholder: "Collection name", okLabel: "Create", checkbox: "Public (other RomM users can see it)" });
+      if (!answer) return false;
+      const created = await api("collections:create", answer.text, answer.checked);
+      id = created.id;
+      name = created.name;
+    }
+    await api("collections:addRoms", id, [romId]);
+    toast(`Added to “${name}”`, "ok");
+    loadSidebar();
+    return true;
+  } catch (error) {
+    toast(error.message, "error");
+    return false;
+  }
+}
+
+// Right-click a card: add it to a collection.
+$("#grid").addEventListener("contextmenu", (e) => {
+  const card = e.target.closest(".card");
+  if (!card) return;
+  e.preventDefault();
+  const id = Number(card.dataset.id);
+  addToCollectionFlow(id, $(".title", card)?.textContent ?? "");
 });
 
 // ------------------------------------------------------------------ chooser
@@ -450,6 +708,9 @@ function renderDetail() {
         <div class="versions">${r.versions.map((v) => `<div class="opt ${v.id === r.id ? "cur" : ""}" data-version="${v.id}" title="${esc(v.name)}">
           <span class="lbl">${esc(v.fileName || v.name)}</span>${v.installed ? '<span class="chip">✓ downloaded</span>' : ""}</div>`).join("")}</div>
         <div class="hint">Play / Download apply to the highlighted version.</div>` : ""}
+      <h3>Collections</h3>
+      <div class="chips">${(r.collections ?? []).map((c) => `<span class="chip col-chip">${esc(c.name)}<button data-remove-col="${c.id}" title="Remove from this collection">✕</button></span>`).join("")}
+        <button class="chip" data-act="addcol">+ Add to collection</button></div>
       ${r.summary ? `<h3>Summary</h3><div class="summary">${esc(r.summary)}</div>` : ""}
       ${installed ? `<h3>Downloaded files</h3><div class="files">${installed.files.map((f) => `
         <div><label><input type="radio" name="launch" value="${esc(f)}" ${f === installed.launchFile ? "checked" : ""}> ${esc(f)}</label></div>`).join("")}
@@ -503,6 +764,21 @@ function renderDetailActions() {
 
 $("#detail").addEventListener("click", async (e) => {
   if (e.target.closest(".close")) return closeDetail();
+  const removeCol = e.target.closest("[data-remove-col]");
+  if (removeCol && detailRom) {
+    const colId = Number(removeCol.dataset.removeCol);
+    try {
+      await api("collections:removeRoms", colId, [detailRom.id]);
+      toast("Removed from the collection", "ok");
+      loadSidebar();
+      if (state.view.kind === "collection" && state.view.id === colId) $(`.card[data-id="${detailRom.id}"]`)?.remove();
+      detailRom = await api("rom:get", detailRom.id);
+      renderDetail();
+    } catch (error) {
+      toast(error.message, "error");
+    }
+    return;
+  }
   const version = e.target.closest("[data-version]");
   if (version) return openDetail(Number(version.dataset.version));
   const act = e.target.closest("[data-act]")?.dataset.act;
@@ -518,6 +794,10 @@ $("#detail").addEventListener("click", async (e) => {
     }
     if (act === "cancel" || act === "stop") await api("game:cancel", r.id);
     if (act === "folder") await api("game:openFolder", r.id);
+    if (act === "addcol" && (await addToCollectionFlow(r.id, r.name, (r.collections ?? []).map((c) => c.id))) && state.detailId === r.id) {
+      detailRom = await api("rom:get", r.id);
+      renderDetail();
+    }
     if (act === "sync") toast(await api("game:syncSaves", r.id), "ok");
     if (act === "web") await api("open:external", r.webUrl);
     if (act === "map") return openSettings("platforms", r.platformSlug);
@@ -555,6 +835,7 @@ async function openSettings(tab, focusSlug) {
   markActive();
   $("#content").hidden = true;
   $("#toolbar").hidden = true;
+  $("#filter-panel").hidden = true;
   $("#settings").hidden = false;
   presets ??= await api("emulators:presets");
   state.config = await api("config:get");
