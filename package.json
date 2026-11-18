@@ -1,7 +1,7 @@
 {
   "name": "romm-launcher",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Lightweight RomM browser that launches games in locally installed emulators",
   "license": "AGPL-3.0-only",
   "main": "dist/main/index.js",
@@ -20,8 +20,16 @@
   "build": {
     "appId": "local.romm.launcher",
     "productName": "RomM Launcher",
-    "directories": { "output": "release" },
-    "files": ["dist/**", "renderer/**", "package.json"],
-    "win": { "target": "portable" }
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "renderer/**",
+      "package.json"
+    ],
+    "win": {
+      "target": "portable"
+    }
   }
 }
