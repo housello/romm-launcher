@@ -38,8 +38,13 @@ button:disabled { opacity: .5; cursor: default; }
 /* sidebar */
 #sidebar {
   width: 250px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--line);
-  display: flex; flex-direction: column; overflow-y: auto;
+  display: flex; flex-direction: column; overflow: hidden;
 }
+/* The list between the search box and Settings scrolls by itself. */
+.side-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 8px; }
+.side-scroll::-webkit-scrollbar { width: 8px; }
+.side-scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+.side-scroll::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 .brand { font-size: 20px; font-weight: 700; padding: 18px 16px 10px; }
 .brand span { color: var(--accent-2); font-weight: 400; }
 .search { padding: 4px 12px 10px; }
@@ -54,7 +59,7 @@ button:disabled { opacity: .5; cursor: default; }
 .nav-item:hover { background: var(--panel-2); }
 .nav-item.active { background: var(--panel-2); border-left-color: var(--accent); }
 .nav-item .warn { color: #e5a50a; font-size: 11px; }
-.sidebar-foot { margin-top: auto; border-top: 1px solid var(--line); padding: 6px 0; }
+.sidebar-foot { flex-shrink: 0; border-top: 1px solid var(--line); padding: 6px 0; background: var(--panel); }
 
 /* main */
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }

@@ -10,14 +10,17 @@
   <aside id="sidebar">
     <div class="brand">RomM <span>Launcher</span></div>
     <div class="search"><input id="search" type="search" placeholder="Search all games…" title="Ctrl+Shift+F"></div>
-    <nav>
-      <a data-view="all" class="nav-item">All games</a>
-      <a data-view="installed" class="nav-item">Downloaded</a>
-    </nav>
-    <div class="section-title" id="collections-title" hidden>Collections</div>
-    <nav id="collections"></nav>
-    <div class="section-title">Platforms</div>
-    <nav id="platforms"><div class="muted pad">Loading…</div></nav>
+    <!-- Only this part scrolls: logo and search stay on top, Settings at the bottom. -->
+    <div class="side-scroll">
+      <nav>
+        <a data-view="all" class="nav-item">All games</a>
+        <a data-view="installed" class="nav-item">Downloaded</a>
+      </nav>
+      <div class="section-title" id="collections-title" hidden>Collections</div>
+      <nav id="collections"></nav>
+      <div class="section-title">Platforms</div>
+      <nav id="platforms"><div class="muted pad">Loading…</div></nav>
+    </div>
     <div class="sidebar-foot">
       <a data-view="settings" class="nav-item">⚙ Settings</a>
     </div>
