@@ -220,9 +220,9 @@ e.g. *Street Fighter III: New Generation (Asia 970204) (Clone) (Imperfect)*. Eac
 switched off. Mechanical sets and emulation status are only in a `mame -listxml` file; many DATs
 leave them out (the tool says so).
 
-RomM reads the brackets in a name: the ones it recognises become metadata (region, language, …)
-and the others become **tags**, so after renaming you can filter by them in **Filters → Tags**
-(and in RomM's web interface), e.g. only *Parent* + *Working* games.
+These are part of the **name** only. RomM's own tags, regions and languages come from the brackets
+in the *file name* (e.g. `Game (USA) [b].zip`), not from the game name, so they do not appear under
+**Filters → Tags**. They are still searchable: type *Clone* or *Not Working* in the search box.
 
 ## Not included (yet)
 
