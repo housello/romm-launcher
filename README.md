@@ -10,21 +10,24 @@ the collection. The only things stored locally are:
 - `launcher-config.json`: server, emulators, platform mapping (no secrets)
 - `credentials.dat`: the password / token, encrypted with Windows' data protection (not readable text)
 - `installed.json`: the games you downloaded
+- `last-versions.json`: the version of each game you played last
 - `image-cache/`: cover art, so revisits are instant
-- the downloaded games themselves (default `%APPDATA%\romm-launcher\roms\<platform>\`, configurable per platform)
+- the downloaded games themselves (default `roms\<platform>\` next to the exe, configurable per platform)
 
-All under `%APPDATA%\romm-launcher\`, or next to the exe in portable mode (below).
+## Install and update
 
-## Portable mode
+Download `RomM-Launcher-x.y.z.zip` from the releases, unzip `RomM-Launcher.exe` into a folder of
+its own and start it. To update, overwrite `RomM-Launcher.exe` with the new one: everything else
+stays.
 
-Put an empty file named **`portable`** (or `portable.txt`) next to the exe and start it. Then
-everything lives in a **`RomM Launcher Data`** folder beside the exe — settings, the encrypted
-login, the list of downloaded games, save-sync records and caches — and nothing is written to
-AppData. Paths can be relative to the exe's folder, and the defaults are:
+## Where the data lives
+
+By default everything lives next to the exe, in a **`RomM Launcher Data`** folder: settings, the
+encrypted login, the list of downloaded games, save-sync records and caches. Nothing is written
+to AppData. Paths can be relative to the exe's folder, and the defaults are:
 
 ```
-RomM Launcher.exe
-portable
+RomM-Launcher.exe
 RomM Launcher Data\     settings, login, caches
 roms\<platform>\...     downloaded games
 saves\...               synced saves
@@ -35,10 +38,14 @@ Emulators, per-platform download folders and the save folder can be relative too
 something inside the launcher's folder. Downloaded games are recorded relative to it, so the folder
 keeps working when it moves or the drive letter changes.
 
-On the first portable start, the settings from AppData are copied over (copied, not moved). The
-login is not: it is encrypted per Windows user and data folder, so it is entered once more. For
-the same reason, on another PC or Windows account the launcher asks for the password again;
-everything else carries over. Without the `portable` file, everything stays in AppData.
+**Settings → Storage → Launcher data** moves it to `%APPDATA%\romm-launcher` instead (an
+`appdata` file next to the exe records the choice), or back. The settings, downloaded-games list
+and save-sync records are copied over with their paths adjusted, and the launcher restarts.
+
+The login is never copied: it is encrypted per Windows user and data folder, so it is entered once
+more after a move. For the same reason, on another PC or Windows account the launcher asks for the
+password again; everything else carries over. Before 0.1.5 the data stayed in AppData unless a
+`portable` file was next to the exe; the first start of 0.1.5 copies it next to the exe.
 
 ## Run
 
@@ -47,7 +54,8 @@ npm install
 npm run dev
 ```
 
-Build a portable `.exe`: `npm run package` (output in `release/`).
+Build `release/RomM-Launcher.exe` with `npm run package`. `npm run release` also zips it as
+`release/RomM-Launcher-<version>.zip`.
 
 ## Setup
 
@@ -91,9 +99,10 @@ with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers
   Play asks which one to start and remembers the answer. Readmes, data files and cue-sheet
   tracks are not offered. You can change the chosen file later in the game's detail panel.
 - **Versions**: RomM groups versions of the same game (regions, revisions) as *siblings*.
-  The launcher shows one card per game, marked "N versions". Pressing Play on it asks
-  which version to download and start, preselecting the one you already downloaded. In the
-  detail panel, the Versions list switches between them. Turn grouping off in
+  The launcher shows one card per game, marked "N versions". The first Play asks which version
+  to download and start, preselecting the one you already downloaded, and remembers it: later
+  Plays start that version directly. Opening the game shows it, marked "last played"; to change
+  version, pick another in the Versions list and press Play there. Turn grouping off in
   Settings → Storage to see every version as its own card.
 - **Extract .zip games** (per emulator) unpacks zipped ROMs for emulators that cannot read
   archives. Only zip (store/deflate, no zip64) is supported, not 7z.
@@ -172,7 +181,7 @@ How saves are found is set per emulator (Settings → Emulators → Save sync):
 - **Off**: e.g. Dolphin, PCSX2 and PPSSPP, which keep saves in memory cards or by game ID
   rather than one file per game.
 
-Synced saves live in the save folder (default `%APPDATA%\romm-launcher\saves\<platform>\<romId>`),
+Synced saves live in the save folder (default `saves\<platform>\<romId>` next to the exe),
 not in the game folder, so deleting a game's local copy keeps them. If a pattern points
 inside the game folder, those saves are uploaded before the copy is deleted (and nothing is
 deleted if the upload fails).

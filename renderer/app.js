@@ -322,11 +322,18 @@ $("#grid").addEventListener("click", (e) => {
   if (play) {
     e.stopPropagation();
     const item = state.items?.get(Number(play.dataset.play));
-    if (item?.versions?.length > 1) return chooseVersion(item, "Play").then((id) => id && playGame(id));
+    if (item?.versions?.length > 1) {
+      const last = lastVersionOf(item.versions);
+      if (last) return playGame(last);
+      return chooseVersion(item, "Play").then((id) => id && playVersion(item.versions, id));
+    }
     return playGame(Number(play.dataset.play));
   }
   const card = e.target.closest(".card");
-  if (card) openDetail(Number(card.dataset.id));
+  if (card) {
+    const item = state.items?.get(Number(card.dataset.id));
+    openDetail((item?.versions?.length > 1 && lastVersionOf(item.versions)) || Number(card.dataset.id));
+  }
 });
 
 let searchTimer = 0;
@@ -706,6 +713,23 @@ function chooseVersion(item, verb) {
 
 // ------------------------------------------------------------------ play / events
 
+/** The version of a game played last, if it is still one of `versions`. */
+function lastVersionOf(versions) {
+  const ids = versions.map((v) => v.id);
+  const last = ids.map((id) => state.lastVersions?.[id]).find((id) => id !== undefined);
+  return ids.includes(last) ? last : null;
+}
+
+/** Play one version of a game and remember it, so the next Play starts it directly. */
+async function playVersion(versions, id) {
+  try {
+    state.lastVersions = await api("versions:remember", versions.map((v) => v.id), id);
+  } catch {
+    // Only a convenience: the game still starts.
+  }
+  return playGame(id);
+}
+
 async function playGame(id) {
   try {
     state.jobs.set(id, { type: "progress", label: "Preparing…", received: 0, total: 0 });
@@ -761,8 +785,18 @@ function markInstalled(id) {
   if (card && !$(".badge", card)) card.insertAdjacentHTML("afterbegin", '<span class="badge" title="Downloaded">✓</span>');
 }
 
+/** The card showing game `id`, which may be one of the versions folded into it. */
+function cardOf(id) {
+  const own = $(`.card[data-id="${id}"]`);
+  if (own) return own;
+  for (const [cardId, item] of state.items ?? []) {
+    if (item.versions?.some((v) => v.id === id)) return $(`.card[data-id="${cardId}"]`);
+  }
+  return null;
+}
+
 function refreshJob(id) {
-  const card = $(`.card[data-id="${id}"]`);
+  const card = cardOf(id);
   const job = state.jobs.get(id);
   if (card) {
     $(".bar", card)?.remove();
@@ -820,8 +854,8 @@ function renderDetail() {
     <div class="detail-body">
       ${r.versions?.length > 1 ? `<h3 style="margin-top:4px">Versions (${r.versions.length})</h3>
         <div class="versions">${r.versions.map((v) => `<div class="opt ${v.id === r.id ? "cur" : ""}" data-version="${v.id}" title="${esc(v.name)}">
-          <span class="lbl">${esc(v.fileName || v.name)}</span>${v.installed ? '<span class="chip">✓ downloaded</span>' : ""}</div>`).join("")}</div>
-        <div class="hint">Play / Download apply to the highlighted version.</div>` : ""}
+          <span class="lbl">${esc(v.fileName || v.name)}</span>${v.id === lastVersionOf(r.versions) ? '<span class="chip">▶ last played</span>' : ""}${v.installed ? '<span class="chip">✓ downloaded</span>' : ""}</div>`).join("")}</div>
+        <div class="hint">Play / Download apply to the highlighted version. Playing it here also makes it the version ▶ on the card starts.</div>` : ""}
       <h3>Collections</h3>
       <div class="chips">${(r.collections ?? []).map((c) => `<span class="chip col-chip">${esc(c.name)}<button data-remove-col="${c.id}" title="Remove from this collection">✕</button></span>`).join("")}
         <button class="chip" data-act="addcol">+ Add to collection</button></div>
@@ -900,7 +934,7 @@ $("#detail").addEventListener("click", async (e) => {
   const r = detailRom;
   if (!act || !r) return;
   try {
-    if (act === "play") await playGame(r.id);
+    if (act === "play") await (r.versions?.length > 1 ? playVersion(r.versions, r.id) : playGame(r.id));
     if (act === "install") {
       state.jobs.set(r.id, { type: "progress", label: "Preparing…", received: 0, total: 0 });
       renderDetailActions();
@@ -1264,11 +1298,12 @@ async function renderStorage() {
   const info = await api("cache:info");
   const where = await api("app:paths").catch(() => null);
   $("#tab-body").innerHTML = `
-    ${where ? `<div class="hint" style="margin-bottom:14px;max-width:760px">${where.portable
-      ? `<b>Portable mode</b> (a <code>portable</code> file is next to the exe). Everything, including the encrypted login, is in <code>${esc(where.dataDir)}</code>.
-         Relative paths (here, in Emulators and in Platforms) are relative to the launcher's folder <code>${esc(where.baseDir)}</code>, e.g. <code>roms</code> or <code>emulators\\RetroArch\\retroarch.exe</code>.`
-      : `Settings and the encrypted login are in <code>${esc(where.dataDir)}</code>. To keep everything next to the exe instead, put an empty file named <code>portable</code> beside it and restart.`}</div>` : ""}
     <div class="form">
+      ${where?.canSwitch ? `<label>Launcher data</label><div>
+        <label style="display:block"><input type="radio" name="g-where" value="local" ${where.portable ? "checked" : ""}> Next to RomM-Launcher.exe (recommended) <span class="muted">${esc(where.local)}</span></label>
+        <label style="display:block;margin-top:4px"><input type="radio" name="g-where" value="appdata" ${where.portable ? "" : "checked"}> In AppData <span class="muted">${esc(where.appData)}</span></label></div>
+      <label></label><div class="hint">Settings, the encrypted login, the downloaded-games list and save-sync records. Next to the exe, overwriting RomM-Launcher.exe with a new version keeps everything${where.portable ? `, and relative paths (here, in Emulators and in Platforms) are relative to <code>${esc(where.baseDir)}</code>` : ""}. Changing it copies them over and restarts the launcher; you sign in again.</div>`
+      : where ? `<label>Launcher data</label><div class="hint">${esc(where.dataDir)}</div>` : ""}
       <label>Game download folder</label><div class="row"><input id="g-dir" value="${esc(c.romDir)}"><button id="g-browse">Browse…</button></div>
       <label></label><div class="hint">Games are kept here after the first play so they start instantly next time. Currently ${info.romCount} games, ${fmtBytes(info.romBytes)}.</div>
       <label>Games per page</label><input id="g-page" type="number" min="20" max="500" value="${c.pageSize}">
@@ -1286,6 +1321,20 @@ async function renderStorage() {
     if (dir) $("#g-dir").value = dir;
   });
   $("#g-clear").addEventListener("click", async () => { await api("cache:clearImages"); renderStorage(); toast("Image cache cleared", "ok"); });
+  $$('[name="g-where"]').forEach((r) => r.addEventListener("change", async () => {
+    const toLocal = r.value === "local";
+    const where = toLocal ? "next to RomM-Launcher.exe" : "in AppData";
+    if (!confirm(`Keep the launcher's data ${where}?\n\nSettings, downloaded-games list and save-sync records are copied there and the launcher restarts. You will sign in again.`)) {
+      renderStorage();
+      return;
+    }
+    try {
+      await api("app:setDataLocation", toLocal);
+    } catch (error) {
+      toast(error.message, "error");
+      renderStorage();
+    }
+  }));
   $("#g-save").addEventListener("click", () => save({
     romDir: $("#g-dir").value.trim(),
     pageSize: Math.max(20, Math.min(500, Number($("#g-page").value) || 60)),
@@ -1471,6 +1520,7 @@ function renderPlan() {
 
 (async function boot() {
   state.config = await api("config:get");
+  state.lastVersions = await api("versions:last").catch(() => ({}));
   if (!state.config.serverUrl) {
     openSettings("server");
     $("#platforms").innerHTML = '<div class="muted pad">Not connected</div>';

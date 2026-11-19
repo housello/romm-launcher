@@ -2,16 +2,17 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electro
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { apiFetch, apiGet, ApiError } from "./api";
-import { baseDir, dataDir, isPortable, resolvePath, setupDataFolder, toStored } from "./paths";
+import { baseDir, canSwitchLocation, dataDir, dataLocations, isPortable, resolvePath, setupDataFolder, switchDataLocation, toStored } from "./paths";
 import { loadConfig, publicConfig, updateConfig } from "./config";
 import { saveModeOf, DEFAULT_CORES, detectRetroArch, listCores, PRESETS } from "./emulators";
 import { clearImageCache, imageCacheSize, registerImageProtocol, registerImageSchemePrivileges } from "./images";
 import { getInstalled, listInstalled } from "./library";
+import { lastVersions, rememberVersion } from "./lastVersions";
 import { applyRenames, buildPlan, undoInfo, undoLast } from "./mame";
 import { cancel, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
 
-// Test data folder: ROMM_LAUNCHER_DATA keeps settings elsewhere. A "portable" file next to the exe
-// moves everything next to it instead (see paths.ts); that wins over ROMM_LAUNCHER_DATA.
+// Test data folder: ROMM_LAUNCHER_DATA keeps settings elsewhere. The packaged launcher keeps
+// everything next to its exe unless an "appdata" file is there (see paths.ts); that wins.
 if (process.env.ROMM_LAUNCHER_DATA) app.setPath("userData", process.env.ROMM_LAUNCHER_DATA);
 setupDataFolder();
 
@@ -151,6 +152,8 @@ async function createCollection(name: string, isPublic: boolean, isFavorite = fa
 
 function registerIpc(): void {
   handle("config:get", () => publicConfig());
+  handle("versions:last", () => lastVersions());
+  handle("versions:remember", (versionIds, chosen) => rememberVersion(versionIds, chosen));
   handle("config:set", (patch) => {
     const next = updateConfig(patch);
     applyTheme();
@@ -351,7 +354,8 @@ function registerIpc(): void {
   handle("emulators:detectRetroArch", () => { const p = detectRetroArch(); return p ? toStored(p) : null; });
   handle("emulators:cores", (path: string) => listCores(resolvePath(path)));
   handle("emulators:exists", (path: string) => !!path && existsSync(resolvePath(path)));
-  handle("app:paths", () => ({ portable: isPortable(), baseDir: baseDir(), dataDir: dataDir() }));
+  handle("app:paths", () => ({ portable: isPortable(), baseDir: baseDir(), dataDir: dataDir(), canSwitch: canSwitchLocation(), ...dataLocations() }));
+  handle("app:setDataLocation", (toLocal: boolean) => switchDataLocation(!!toLocal));
 
   handle("dialog:pickExe", async () => {
     const result = await dialog.showOpenDialog(win!, {
