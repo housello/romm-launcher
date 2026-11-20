@@ -1207,17 +1207,17 @@ window.romm.onLaunchEvent((ev) => {
 });
 
 function markInstalled(id) {
-  for (const card of $(`.card[data-id="${id}"]`)) {
+  for (const card of $$(`.card[data-id="${id}"]`)) {
     if (!$(".badge", card)) card.insertAdjacentHTML("afterbegin", '<span class="badge" title="Downloaded">✓</span>');
   }
 }
 
 /** The cards showing game `id`, which may be one of the versions folded into them. */
 function cardsOf(id) {
-  const own = $(`.card[data-id="${id}"]`);
+  const own = $$(`.card[data-id="${id}"]`);
   if (own.length) return own;
   for (const [cardId, item] of state.items ?? []) {
-    if (item.versions?.some((v) => v.id === id)) return $(`.card[data-id="${cardId}"]`);
+    if (item.versions?.some((v) => v.id === id)) return $$(`.card[data-id="${cardId}"]`);
   }
   return [];
 }
