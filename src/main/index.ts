@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { apiFetch, apiGet, ApiError } from "./api";
 import { baseDir, canSwitchLocation, dataDir, dataLocations, isPortable, resolvePath, setupDataFolder, switchDataLocation, toStored } from "./paths";
 import { loadConfig, publicConfig, updateConfig } from "./config";
@@ -13,7 +13,7 @@ import { checkForUpdate, cleanUpUpdate, installUpdate, type UpdateInfo } from ".
 import { checkEmulatorUpdates, installCores, installDir, installEmulator } from "./emulatorManager";
 import { lastVersions, rememberVersion } from "./lastVersions";
 import { applyRenames, buildPlan, undoInfo, undoLast } from "./mame";
-import { syncFoldersOf, localPathOf, webdavClient } from "./folderSync";
+import { syncFoldersOf, localPathOf, storedFolderPath, webdavClient } from "./folderSync";
 import { cancel, resolveConflicts, syncAllFolders, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
 
 // Test data folder: ROMM_LAUNCHER_DATA keeps settings elsewhere. The packaged launcher keeps
@@ -62,6 +62,11 @@ const emit = (event: LaunchEvent) => {
 };
 
 /** Wrap a handler so errors reach the renderer as { error } instead of an opaque rejection. */
+/** Portable: file pickers open in the launcher's folder, where its paths are relative to. */
+function browseStart(): { defaultPath?: string } {
+  return isPortable() ? { defaultPath: baseDir() } : {};
+}
+
 function handle(channel: string, fn: (...args: any[]) => unknown): void {
   ipcMain.handle(channel, async (_event, ...args) => {
     try {
@@ -438,13 +443,22 @@ function registerIpc(): void {
     const result = await dialog.showOpenDialog(win!, {
       properties: ["openFile"],
       filters: [{ name: "Programs", extensions: ["exe", "bat", "cmd"] }, { name: "All files", extensions: ["*"] }],
+      ...browseStart(),
     });
     // Inside the launcher's folder (portable), the path is stored relative to it.
     return result.canceled ? null : toStored(result.filePaths[0] ?? "") || null;
   });
   handle("dialog:pickFolder", async () => {
-    const result = await dialog.showOpenDialog(win!, { properties: ["openDirectory", "createDirectory"] });
+    const result = await dialog.showOpenDialog(win!, { properties: ["openDirectory", "createDirectory"], ...browseStart() });
     return result.canceled ? null : toStored(result.filePaths[0] ?? "") || null;
+  });
+
+  handle("dialog:pickSaveFolder", async (emulatorId: string) => {
+    const emulator = loadConfig().emulators.find((e) => e.id === emulatorId);
+    if (!emulator) return null;
+    const result = await dialog.showOpenDialog(win!, { properties: ["openDirectory"], defaultPath: dirname(resolvePath(emulator.path)) });
+    const picked = result.canceled ? "" : result.filePaths[0] ?? "";
+    return picked ? storedFolderPath(emulator, picked) : null;
   });
 
   handle("cache:info", async () => {

@@ -10,7 +10,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { copyFile, mkdir, readdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { getWebdavPassword, loadConfig, type EmulatorDef, type SyncFolder } from "./config";
 import { PRESETS, type Preset } from "./emulators";
 import { dataDir, resolvePath } from "./paths";
@@ -76,7 +76,19 @@ function remoteRoot(emulator: EmulatorDef): string {
 
 /** Where a synced folder is on this PC. */
 export function localPathOf(emulator: EmulatorDef, folder: SyncFolder): string {
-  return expand(folder.path, dirname(resolvePath(emulator.path)));
+  const path = expand(folder.path, dirname(resolvePath(emulator.path)));
+  // 0.2.0 stored added folders relative to the launcher's folder: find those where they are.
+  if (!existsSync(path) && !isAbsolute(folder.path) && !folder.path.includes("%")) {
+    const fromBase = resolvePath(folder.path);
+    if (existsSync(fromBase)) return fromBase;
+  }
+  return path;
+}
+
+/** How to store a folder picked for an emulator: relative to its folder when inside it. */
+export function storedFolderPath(emulator: EmulatorDef, absolute: string): string {
+  const rel = relative(dirname(resolvePath(emulator.path)), absolute);
+  return rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : absolute;
 }
 
 // ------------------------------------------------------------------ records

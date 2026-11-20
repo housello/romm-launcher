@@ -1554,7 +1554,7 @@ async function renderEmulators() {
     if (folder) return api("emulators:openFolder", folder);
     if (e.target.closest("[data-emu-cores]")) return downloadCores(state.config.emulators.find((x) => x.id === box.dataset.id));
     if (e.target.closest("[data-sf-add]")) {
-      const dir = await api("dialog:pickFolder");
+      const dir = await api("dialog:pickSaveFolder", box.dataset.id);
       if (!dir) return;
       const name = dir.split(/[\\/]/).filter(Boolean).pop() || "saves";
       return saveFolders(box.dataset.id, [...(folders?.[box.dataset.id] ?? []), { name, path: dir, enabled: true }]);
