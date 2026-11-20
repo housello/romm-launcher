@@ -72,6 +72,8 @@ export interface Config {
   checkUpdates: boolean;
   /** The game list's sort, as the toolbar menu's value ("name:asc", "created_at:desc", …). */
   sort: string;
+  /** The game list as covers or as a details list. */
+  viewMode: "grid" | "list";
   /**
    * Where a multi-file game's files go: "subfolder" keeps them in a folder named after
    * the game, "flat" puts them straight in the platform's download folder.
@@ -154,6 +156,7 @@ function defaults(): Config {
     pageSize: 60,
     groupVersions: true,
     sort: "name:asc",
+    viewMode: "grid",
     reportPlayTime: true,
     checkUpdates: true,
     multiFileLayout: "subfolder",

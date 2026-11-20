@@ -417,7 +417,8 @@ function registerIpc(): void {
   handle("emulators:detectRetroArch", () => { const p = detectRetroArch(); return p ? toStored(p) : null; });
   handle("emulators:cores", (path: string) => listCores(resolvePath(path)));
   handle("emulators:exists", (path: string) => !!path && existsSync(resolvePath(path)));
-  handle("app:paths", () => ({ portable: isPortable(), baseDir: baseDir(), dataDir: dataDir(), canSwitch: canSwitchLocation(), ...dataLocations() }));
+  handle("app:info", () => ({ version: app.getVersion(), project: "https://github.com/stemarinacciowork-dev/romm-launcher" }));
+  handle("app:paths",() => ({ portable: isPortable(), baseDir: baseDir(), dataDir: dataDir(), canSwitch: canSwitchLocation(), ...dataLocations() }));
   handle("app:setDataLocation", (toLocal: boolean) => switchDataLocation(!!toLocal));
 
   handle("dialog:pickExe", async () => {

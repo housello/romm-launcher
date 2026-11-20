@@ -88,12 +88,12 @@ function markActive() {
   const v = state.view;
   const sel = v.kind === "platform" ? `[data-platform="${v.id}"]` : v.kind === "collection" ? `[data-view="collections"]` : `[data-view="${v.kind}"]`;
   $(sel)?.classList.add("active");
+  $$("#menubar a").forEach((a) => a.classList.toggle("active", a.dataset.menu === v.kind));
 }
 
 $("#sidebar").addEventListener("click", (e) => {
   const a = e.target.closest(".nav-item");
   if (!a) return;
-  if (a.dataset.view === "settings") return openSettings();
   if (a.dataset.view) setView({ kind: a.dataset.view, title: a.textContent.trim() });
   if (a.dataset.platform) {
     const p = state.platforms.find((x) => x.id === Number(a.dataset.platform));
@@ -118,7 +118,7 @@ function setOnline(online) {
     toast("RomM is reachable again", "ok");
     loadSidebar();
     if (state.view.kind === "installed") reload();
-  } else if (state.view.kind !== "installed" && state.view.kind !== "settings") {
+  } else if (!["installed", "settings", "about"].includes(state.view.kind)) {
     setView({ kind: "installed", title: "Downloaded" });
   }
 }
@@ -137,21 +137,110 @@ $("#offline-retry").addEventListener("click", async () => {
 
 // ------------------------------------------------------------------ updates
 
-/** Look for a newer launcher; `quiet` shows nothing when there is none or GitHub fails. */
+/**
+ * Look for a newer launcher; `quiet` shows nothing when there is none or GitHub fails.
+ * Returns the update, null when up to date, or the error message.
+ */
 async function checkUpdates(quiet) {
   let update;
   try {
     update = await api("update:check");
   } catch (error) {
     if (!quiet) toast(`Could not check for updates: ${error.message}`, "error");
-    return;
+    return error.message;
   }
   if (!update) {
     if (!quiet) toast(`RomM Launcher is up to date`, "ok");
-    return;
+    return null;
   }
   showUpdate(update);
+  return update;
 }
+
+// ------------------------------------------------------------------ about
+
+const about = { launcher: "", emulators: "" };
+
+function openAbout() {
+  closeDetail();
+  state.view = { kind: "about" };
+  markActive();
+  $("#content").hidden = true;
+  $("#toolbar").hidden = true;
+  $("#filter-panel").hidden = true;
+  $("#settings").hidden = true;
+  $("#about").hidden = false;
+  renderAbout();
+}
+
+async function renderAbout() {
+  const info = await api("app:info");
+  presets ??= await api("emulators:presets");
+  state.config = await api("config:get");
+  if (state.view.kind !== "about") return;
+  const managed = state.config.emulators.filter((e) => e.managed);
+  const rows = managed.map((e) => {
+    const key = e.managed.key;
+    const update = emuCatalog.updates[key];
+    const busy = emuCatalog.busy.get(key);
+    return `<div><span>${esc(e.name)} <span class="muted">${esc(e.managed.version)}</span></span>
+      <span data-emu-status="${key}">${busy ? esc(busy)
+        : update?.version ? `<b>${esc(update.version)} available</b> <button class="primary" data-about-update="${key}">Update</button>`
+        : update?.error ? `<span class="muted" title="${esc(update.error)}">check failed</span>` : ""}</span></div>`;
+  });
+  $("#about").innerHTML = `
+    <h1 style="margin-top:0">RomM Launcher <span class="muted" style="font-weight:400">${esc(info.version)}</span></h1>
+    <div class="hint" style="max-width:760px">A Windows client for a <a data-ext="https://github.com/rommapp/romm">RomM</a> server that plays your library in local emulators.
+      Not affiliated with the RomM project. License AGPL-3.0. <a data-ext="${esc(info.project)}">Project page</a> · <a data-ext="${esc(info.project)}/releases">Release notes</a></div>
+
+    <h2>Launcher updates</h2>
+    <div class="form">
+      <label>Version</label><div class="row"><span>${esc(info.version)}</span><span class="muted" id="about-launcher">${esc(about.launcher)}</span><div class="spacer"></div><button id="about-check">Check now</button></div>
+      <label></label><label><input type="checkbox" id="about-auto" ${state.config.checkUpdates !== false ? "checked" : ""}> Look for a new version at start (asks GitHub)</label>
+    </div>
+
+    <h2>Emulator updates</h2>
+    ${managed.length ? `<div class="row" style="margin-bottom:8px"><span class="muted" id="about-emus">${esc(about.emulators)}</span><div class="spacer"></div><button id="about-check-emus">Check emulator updates</button></div>
+      <div class="files" style="font-family:inherit;font-size:14px;max-width:760px">${rows.join("")}</div>`
+      : '<div class="muted">No emulator was downloaded by the launcher. Add one in Settings → Emulators and choose Download.</div>'}`;
+}
+
+$("#about").addEventListener("click", async (e) => {
+  const ext = e.target.closest("[data-ext]")?.dataset.ext;
+  if (ext) return api("open:external", ext);
+  if (e.target.id === "about-check") {
+    e.target.disabled = true;
+    about.launcher = "Checking…";
+    $("#about-launcher").textContent = about.launcher;
+    const result = await checkUpdates(true);
+    about.launcher = result === null ? "Up to date" : typeof result === "string" ? `Check failed: ${result}` : `${result.version} available, see the banner above`;
+    return renderAbout();
+  }
+  if (e.target.id === "about-check-emus") {
+    e.target.disabled = true;
+    about.emulators = "Checking…";
+    $("#about-emus").textContent = about.emulators;
+    try {
+      const keys = await checkEmulatorUpdates();
+      about.emulators = keys.length ? `${keys.length} update${keys.length === 1 ? "" : "s"} available` : "All up to date";
+    } catch (error) {
+      about.emulators = `Check failed: ${error.message}`;
+    }
+    return renderAbout();
+  }
+  const update = e.target.closest("[data-about-update]")?.dataset.aboutUpdate;
+  if (update) return installFromCatalog(update);
+});
+
+$("#about").addEventListener("change", async (e) => {
+  if (e.target.id === "about-auto") await save({ checkUpdates: e.target.checked }, true);
+});
+
+$("#menubar").addEventListener("click", (e) => {
+  const item = e.target.closest("[data-menu]")?.dataset.menu;
+  if (item === "settings") openSettings();
+  if (item === "about") openAbout();
+});
 
 function showUpdate(update) {
   const banner = $("#update-banner");
@@ -197,10 +286,12 @@ function setView(view, search = "") {
   if (view.kind !== "all") $("#search").value = "";
   $("#view-search").placeholder = `Search in ${view.title}…`;
   $("#settings").hidden = true;
+  $("#about").hidden = true;
   $("#content").hidden = false;
   $("#toolbar").hidden = false;
   $("#view-title").textContent = view.title;
   markActive();
+  applyViewMode();
   reload();
   if (!$("#filter-panel").hidden) toggleFilterPanel(true);
 }
@@ -442,6 +533,22 @@ $("#sort").addEventListener("change", () => {
   reload();
   api("config:set", { sort: state.sort }).then((c) => { state.config = c; }).catch(() => {});
 });
+/** Covers or the details list; the collections page always shows covers. */
+function applyViewMode() {
+  const list = state.config?.viewMode === "list";
+  $("#grid").classList.toggle("list", list && state.view.kind !== "collections");
+  $("#zoom").hidden = list;
+  $$(".viewmode button").forEach((b) => b.classList.toggle("active", b.dataset.mode === (list ? "list" : "grid")));
+}
+
+$(".viewmode").addEventListener("click", async (e) => {
+  const mode = e.target.closest("[data-mode]")?.dataset.mode;
+  if (!mode) return;
+  state.config = { ...state.config, viewMode: mode };
+  applyViewMode();
+  state.config = await api("config:set", { viewMode: mode });
+});
+
 $("#zoom").addEventListener("input", () => {
   document.documentElement.style.setProperty("--card", $("#zoom").value + "px");
   maybeLoadMore();
@@ -1082,6 +1189,7 @@ async function openSettings(tab, focusSlug) {
   $("#toolbar").hidden = true;
   $("#filter-panel").hidden = true;
   $("#settings").hidden = false;
+  $("#about").hidden = true;
   presets ??= await api("emulators:presets");
   state.config = await api("config:get");
   renderSettings(focusSlug);
@@ -1157,123 +1265,101 @@ function newId() { return Math.random().toString(36).slice(2, 10); }
 /** Same inference as the main process, for emulators saved before save sync existed. */
 const modeOf = (e) => e.saveMode || (/retroarch/i.test(e.path || "") ? "retroarch" : "off");
 
-// ---- emulator catalog: download, update
+// ---- emulators the launcher downloads and updates
 
-const emuCatalog = { updates: {}, busy: new Map(), checked: false };
+const emuCatalog = { updates: {}, busy: new Map() };
 
 window.romm.onEmuProgress((ev) => {
-  emuCatalog.busy.set(ev.key, ev.total ? `${ev.label} — ${fmtBytes(ev.received)} / ${fmtBytes(ev.total)}`
-    : ev.received ? `${ev.label} — ${fmtBytes(ev.received)}` : ev.label);
-  const cell = $(`[data-cat-status="${ev.key}"]`);
-  if (cell) cell.textContent = emuCatalog.busy.get(ev.key);
+  const text = ev.total ? `${ev.label} — ${fmtBytes(ev.received)} / ${fmtBytes(ev.total)}`
+    : ev.received ? `${ev.label} — ${fmtBytes(ev.received)}` : ev.label;
+  emuCatalog.busy.set(ev.key, text);
+  $$(`[data-emu-status="${ev.key}"]`).forEach((el) => { el.hidden = false; el.textContent = text; });
 });
 
 /** Platforms in the library, which new emulators are mapped to. */
 const librarySlugs = () => state.platforms.flatMap((p) => [p.slug, p.fsSlug]).filter(Boolean);
 
-function catalogHtml() {
-  const c = state.config;
-  const rows = presets.presets.filter((p) => p.source).map((p) => {
-    const installed = c.emulators.find((e) => e.managed?.key === p.key);
-    const update = emuCatalog.updates[p.key];
-    const busy = emuCatalog.busy.get(p.key);
-    const inLibrary = p.platforms.filter((s) => librarySlugs().includes(s));
-    const status = busy ? busy
-      : installed ? `Installed ${installed.managed.version}${update?.version ? ` · ${update.version} available` : update?.error ? ` · update check failed` : ""}`
-      : "";
-    const actions = busy ? "" : installed
-      ? `${update?.version ? `<button class="primary" data-cat-install="${p.key}">Update</button>` : ""}<button data-cat-folder="${p.key}">Open folder</button>`
-        + (p.key === "retroarch" ? '<button data-cat-cores>Download cores</button>' : "")
-      : `<button data-cat-install="${p.key}">Download</button>`;
-    return `<tr${inLibrary.length ? "" : ' class="muted"'}>
-      <td><a data-cat-site="${esc(p.website ?? "")}" title="${esc(p.website ?? "")}">${esc(p.name)}</a></td>
-      <td class="muted" title="${esc(p.platforms.join(", "))}">${esc((inLibrary.length ? inLibrary : p.platforms).slice(0, 5).join(", "))}${p.platforms.length > 5 && !inLibrary.length ? "…" : ""}</td>
-      <td data-cat-status="${p.key}" title="${esc(update?.error ?? "")}">${esc(status)}</td>
-      <td class="row" style="justify-content:flex-end">${actions}</td></tr>`;
-  });
-  return `<h2 style="margin-top:0">Download emulators</h2>
-    <div class="hint" style="margin-bottom:10px;max-width:820px">The launcher downloads these from their official releases into
-      <code>${esc(c.emulatorDir || "emulators")}</code>, each in its own folder, adds them to the list below and assigns them to your
-      platforms that have no emulator yet. Where an emulator supports it, it is set to keep its settings in its own folder.
-      An update unpacks over the old version: settings and saves in its folder stay. Greyed rows are for platforms your library does not have.</div>
-    <div class="form" style="margin-bottom:10px">
-      <label>Emulator folder</label><div class="row"><input id="e-dir" value="${esc(c.emulatorDir || "emulators")}"><button id="e-dir-browse">Browse…</button><button id="e-check">Check for updates</button></div>
-    </div>
-    <table class="catalog"><tbody>${rows.join("")}</tbody></table>
-    <h2>Your emulators</h2>`;
-}
-
+/** Download (or update) a catalog emulator. Resolves to the emulator entry, or null. */
 async function installFromCatalog(key) {
   const preset = presets.presets.find((p) => p.key === key);
-  emuCatalog.busy.set(key, "Starting…");
-  renderEmulators();
+  emuCatalog.busy.set(key, `Downloading ${preset.name}…`);
+  refreshEmuViews();
   try {
-    await api("emulators:install", key, librarySlugs());
+    const emulator = await api("emulators:install", key, librarySlugs());
     delete emuCatalog.updates[key];
-    toast(`${preset.name} installed`, "ok");
+    toast(`${preset.name} ${emulator.managed.version} installed`, "ok");
+    return emulator;
   } catch (error) {
     toast(`${preset.name}: ${error.message}`, "error");
+    return null;
   } finally {
     emuCatalog.busy.delete(key);
     state.config = await api("config:get");
-    if (state.view.kind === "settings" && settingsTab === "emulators") renderEmulators();
+    refreshEmuViews();
   }
 }
 
-async function catalogClick(e) {
-  const site = e.target.closest("[data-cat-site]")?.dataset.catSite;
-  if (site) return api("open:external", site);
-  const install = e.target.closest("[data-cat-install]")?.dataset.catInstall;
-  if (install) return installFromCatalog(install);
-  const folder = e.target.closest("[data-cat-folder]")?.dataset.catFolder;
-  if (folder) return api("emulators:openFolder", folder);
-  if (e.target.closest("[data-cat-cores]")) {
-    const retro = state.config.emulators.find((x) => x.managed?.key === "retroarch");
-    // The cores of the platforms RetroArch runs here, or that it would run in this library.
-    const mapped = Object.entries(state.config.platforms).filter(([, m]) => m.emulatorId === retro?.id).map(([slug, m]) => m.core || presets.defaultCores[slug]);
-    const preset = presets.presets.find((p) => p.key === "retroarch");
-    const wanted = mapped.length ? mapped : preset.platforms.filter((s) => librarySlugs().includes(s)).map((s) => presets.defaultCores[s]);
-    const cores = [...new Set(wanted.filter(Boolean))];
-    if (!cores.length) return toast("No platform uses RetroArch yet: assign some in Settings → Platforms.", "error");
-    emuCatalog.busy.set("retroarch", "Downloading cores…");
-    renderEmulators();
-    try {
-      const done = await api("emulators:installCores", cores);
-      toast(`Downloaded ${done.length} of ${cores.length} cores: ${done.join(", ")}`, done.length === cores.length ? "ok" : "error");
-    } catch (error) {
-      toast(error.message, "error");
-    } finally {
-      emuCatalog.busy.delete("retroarch");
-      renderEmulators();
-    }
-    return;
+/** Ask RomM-independent sources for newer releases of the emulators the launcher installed. */
+async function checkEmulatorUpdates() {
+  emuCatalog.updates = await api("emulators:checkUpdates");
+  return Object.entries(emuCatalog.updates).filter(([, u]) => u.version).map(([key]) => key);
+}
+
+/** The cores of the platforms RetroArch runs here, or that it would run in this library. */
+function wantedCores(retroarch) {
+  const mapped = Object.entries(state.config.platforms).filter(([, m]) => m.emulatorId === retroarch.id).map(([slug, m]) => m.core || presets.defaultCores[slug]);
+  const preset = presets.presets.find((p) => p.key === "retroarch");
+  const wanted = mapped.length ? mapped : preset.platforms.filter((s) => librarySlugs().includes(s)).map((s) => presets.defaultCores[s]);
+  return [...new Set(wanted.filter(Boolean))];
+}
+
+async function downloadCores(retroarch) {
+  const cores = wantedCores(retroarch);
+  if (!cores.length) return toast("No platform uses RetroArch yet: assign some in Settings → Platforms.", "error");
+  emuCatalog.busy.set("retroarch", "Downloading cores…");
+  refreshEmuViews();
+  try {
+    const done = await api("emulators:installCores", cores);
+    toast(`Downloaded ${done.length} of ${cores.length} cores: ${done.join(", ")}`, done.length === cores.length ? "ok" : "error");
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    emuCatalog.busy.delete("retroarch");
+    refreshEmuViews();
   }
-  if (e.target.id === "e-check") {
-    e.target.disabled = true;
-    e.target.textContent = "Checking…";
-    try {
-      emuCatalog.updates = await api("emulators:checkUpdates");
-      const n = Object.values(emuCatalog.updates).filter((u) => u.version).length;
-      toast(n ? `${n} emulator update${n === 1 ? "" : "s"} available` : "Emulators are up to date", "ok");
-    } catch (error) {
-      toast(error.message, "error");
-    }
-    return renderEmulators();
-  }
-  if (e.target.id === "e-dir-browse") {
-    const dir = await api("dialog:pickFolder");
-    if (dir) { await save({ emulatorDir: dir }, true); renderEmulators(); }
-  }
+}
+
+/** Redraw whichever page shows emulator state. */
+function refreshEmuViews() {
+  if (state.view.kind === "settings" && settingsTab === "emulators") renderEmulators();
+  if (state.view.kind === "about") renderAbout();
+}
+
+/** The line under a launcher-installed emulator: version, update, folder. */
+function managedLine(e) {
+  if (!e.managed) return "";
+  const key = e.managed.key;
+  const busy = emuCatalog.busy.get(key);
+  const update = emuCatalog.updates[key];
+  return `<label>Installed by the launcher</label><div class="row">
+    <span>${esc(e.managed.version)}${update?.version ? ` · <b>${esc(update.version)} available</b>` : ""}</span>
+    <span class="muted" data-emu-status="${key}" ${busy ? "" : "hidden"}>${esc(busy ?? "")}</span>
+    <div class="spacer"></div>
+    ${busy ? "" : `${update?.version ? `<button class="primary" data-emu-update="${key}">Update</button>` : ""}
+      ${key === "retroarch" ? "<button data-emu-cores>Download cores</button>" : ""}
+      <button data-emu-folder="${key}">Open folder</button>`}</div>`;
 }
 
 function renderEmulators() {
   const c = state.config;
-  $("#tab-body").innerHTML = catalogHtml() + `
+  const adding = [...emuCatalog.busy.keys()].filter((key) => !c.emulators.some((e) => e.managed?.key === key));
+  $("#tab-body").innerHTML = `
     <div class="row" style="margin-bottom:14px">
-      <select id="e-preset">${presets.presets.map((p) => `<option value="${p.key}">${esc(p.name)}</option>`).join("")}</select>
+      <select id="e-preset">${presets.presets.map((p) => `<option value="${p.key}">${esc(p.name)}${p.source ? "" : p.key === "custom" ? "" : " (browse only)"}</option>`).join("")}</select>
       <button class="primary" id="e-add">+ Add emulator</button>
       <button id="e-detect">Detect RetroArch</button>
     </div>
+    ${adding.map((key) => `<div class="hint" data-emu-status="${key}" style="margin-bottom:10px">${esc(emuCatalog.busy.get(key))}</div>`).join("")}
     <div class="hint" style="margin-bottom:14px">Argument placeholders: <code>{rom}</code> full path of the game file,
       <code>{romDir}</code>, <code>{romFile}</code>, <code>{romName}</code> (no extension), <code>{emuDir}</code> emulator folder,
       <code>{core}</code> libretro core set per platform. Quote anything that may contain spaces.<br>
@@ -1284,6 +1370,7 @@ function renderEmulators() {
     <div class="emu" data-id="${e.id}">
       <div class="emu-head"><input data-f="name" value="${esc(e.name)}"><div class="spacer"></div><button class="danger" data-del>Remove</button></div>
       <div class="form">
+        ${managedLine(e)}
         <label>Executable</label><div class="row"><input data-f="path" value="${esc(e.path)}"><button data-browse>Browse…</button></div>
         <label>Arguments</label><input data-f="args" value="${esc(e.args)}">
         <label></label><label><input type="checkbox" data-f="extractZip" ${e.extractZip ? "checked" : ""}> Extract .zip games before launching</label>
@@ -1323,7 +1410,7 @@ function renderEmulators() {
   $("#e-list").addEventListener("click", async (e) => {
     const box = e.target.closest(".emu");
     if (e.target.matches("[data-del]")) {
-      if (!confirm("Remove this emulator?")) return;
+      if (!confirm("Remove this emulator?\n\nIts files stay where they are.")) return;
       box.remove();
       await commit();
       return renderEmulators();
@@ -1332,6 +1419,11 @@ function renderEmulators() {
       const path = await api("dialog:pickExe");
       if (path) { $('[data-f="path"]', box).value = path; await commit(); }
     }
+    const update = e.target.closest("[data-emu-update]")?.dataset.emuUpdate;
+    if (update) return installFromCatalog(update);
+    const folder = e.target.closest("[data-emu-folder]")?.dataset.emuFolder;
+    if (folder) return api("emulators:openFolder", folder);
+    if (e.target.closest("[data-emu-cores]")) return downloadCores(state.config.emulators.find((x) => x.id === box.dataset.id));
   });
 
   const addFromPreset = async (preset, path = "") => {
@@ -1351,15 +1443,27 @@ function renderEmulators() {
     return emu;
   };
 
-  $(".catalog").addEventListener("click", catalogClick);
-  $("#e-check").addEventListener("click", catalogClick);
-  $("#e-dir-browse").addEventListener("click", catalogClick);
-  $("#e-dir").addEventListener("change", async () => {
-    await save({ emulatorDir: $("#e-dir").value.trim() || "emulators" }, true);
-  });
   $("#e-add").addEventListener("click", async () => {
     const preset = presets.presets.find((p) => p.key === $("#e-preset").value);
-    const path = preset.key === "retroarch" ? (await api("emulators:detectRetroArch")) ?? "" : "";
+    if (preset.source) {
+      if (state.config.emulators.some((e) => e.managed?.key === preset.key)) {
+        return toast(`${preset.name} is already installed by the launcher; update it from its card.`, "error");
+      }
+      const how = await choose({
+        title: `Add ${preset.name}`,
+        message: "Download it, or use a copy already on this PC?",
+        items: [
+          { value: "download", label: `Download ${preset.name}`, sub: `Latest release, into ${state.config.emulatorDir || "emulators"}\\${preset.key}. The launcher can update it later.` },
+          { value: "browse", label: "Use an existing one", sub: "Pick its executable." },
+        ],
+        selected: "download",
+        okLabel: "Continue",
+      });
+      if (!how) return;
+      if (how === "download") return installFromCatalog(preset.key);
+    }
+    let path = preset.key === "retroarch" ? (await api("emulators:detectRetroArch")) ?? "" : "";
+    if (!path && preset.key !== "custom") path = (await api("dialog:pickExe")) ?? "";
     await addFromPreset(preset, path);
     toast(`${preset.name} added${path ? "" : " — set the executable path"}. Unmapped platforms were assigned to it.`, "ok");
   });
@@ -1510,6 +1614,8 @@ async function renderStorage() {
       <label></label><div class="hint">Settings, the encrypted login, the downloaded-games list and save-sync records. Next to the exe, overwriting RomM-Launcher.exe with a new version keeps everything${where.portable ? `, and relative paths (here, in Emulators and in Platforms) are relative to <code>${esc(where.baseDir)}</code>` : ""}. Changing it copies them over and restarts the launcher; you sign in again.</div>`
       : where ? `<label>Launcher data</label><div class="hint">${esc(where.dataDir)}</div>` : ""}
       <label>Game download folder</label><div class="row"><input id="g-dir" value="${esc(c.romDir)}"><button id="g-browse">Browse…</button></div>
+      <label>Emulator folder</label><div class="row"><input id="g-emudir" value="${esc(c.emulatorDir || "emulators")}"><button id="g-browse-emu">Browse…</button></div>
+      <label></label><div class="hint">Where Settings → Emulators downloads emulators, one folder each. Emulators already there stay where they are.</div>
       <label></label><div class="hint">Games are kept here after the first play so they start instantly next time. Currently ${info.romCount} games, ${fmtBytes(info.romBytes)}.</div>
       <label>Multi-file games</label><div>
         <label style="display:block"><input type="radio" name="g-layout" value="subfolder" ${c.multiFileLayout !== "flat" ? "checked" : ""}> In a folder named after the game <span class="muted">roms\\psx\\Game (USA)\\…</span></label>
@@ -1518,7 +1624,6 @@ async function renderStorage() {
       <label>Games per page</label><input id="g-page" type="number" min="20" max="500" value="${c.pageSize}">
       <label></label><label><input type="checkbox" id="g-min" ${c.minimizeOnLaunch ? "checked" : ""}> Minimize the launcher while a game is running</label>
       <label>Versions</label><label><input type="checkbox" id="g-group" ${c.groupVersions ? "checked" : ""}> One card per game; other versions (regions, revisions) are chosen when playing</label>
-      <label>Updates</label><div class="row"><label><input type="checkbox" id="g-updates" ${c.checkUpdates !== false ? "checked" : ""}> Look for a new RomM Launcher at start (asks GitHub)</label><button id="g-check-updates">Check now</button></div>
       <label>Play time</label><label><input type="checkbox" id="g-playtime" ${c.reportPlayTime !== false ? "checked" : ""}> Send play sessions to RomM, which shows play time per game (RomM 5.5 or later; sent later when played offline)</label>
       <label>Save sync</label><label><input type="checkbox" id="g-sync" ${c.syncSaves ? "checked" : ""}> Sync saves and save states with RomM</label>
       <label>Save folder</label><div class="row"><input id="g-saves" value="${esc(c.saveDir)}"><button id="g-browse-saves">Browse…</button></div>
@@ -1527,11 +1632,14 @@ async function renderStorage() {
       <label>Cover image cache</label><div class="row"><span>${fmtBytes(info.imageBytes)}</span><button id="g-clear">Clear</button></div>
       <label></label><div class="row"><button class="primary" id="g-save">Save</button></div>
     </div>`;
+  $("#g-browse-emu").addEventListener("click", async () => {
+    const dir = await api("dialog:pickFolder");
+    if (dir) $("#g-emudir").value = dir;
+  });
   $("#g-browse").addEventListener("click", async () => {
     const dir = await api("dialog:pickFolder");
     if (dir) $("#g-dir").value = dir;
   });
-  $("#g-check-updates").addEventListener("click", () => checkUpdates(false));
   $("#g-clear").addEventListener("click", async () => { await api("cache:clearImages"); renderStorage(); toast("Image cache cleared", "ok"); });
   $$('[name="g-where"]').forEach((r) => r.addEventListener("change", async () => {
     const toLocal = r.value === "local";
@@ -1549,11 +1657,11 @@ async function renderStorage() {
   }));
   $("#g-save").addEventListener("click", () => save({
     romDir: $("#g-dir").value.trim(),
+    emulatorDir: $("#g-emudir").value.trim() || "emulators",
     pageSize: Math.max(20, Math.min(500, Number($("#g-page").value) || 60)),
     minimizeOnLaunch: $("#g-min").checked,
     syncSaves: $("#g-sync").checked,
     reportPlayTime: $("#g-playtime").checked,
-    checkUpdates: $("#g-updates").checked,
     groupVersions: $("#g-group").checked,
     multiFileLayout: $('[name="g-layout"]:checked')?.value === "flat" ? "flat" : "subfolder",
     saveDir: $("#g-saves").value.trim(),

@@ -70,24 +70,25 @@ Build `release/RomM-Launcher.exe` with `npm run package`. `npm run release` also
 
 ### Downloading emulators
 
-**Settings → Emulators → Download emulators** lists the emulators the launcher can install
-itself, from their official releases: RetroArch, Dolphin, PCSX2, DuckStation, PPSSPP, RPCS3,
-shadPS4, Vita3K, Cemu, Ryujinx (Ryubing), Azahar, melonDS, DeSmuME, mGBA, SameBoy, SkyEmu,
+In **Settings → Emulators**, **+ Add emulator** asks, for the emulators the launcher can fetch,
+whether to **download** it or to **use one already on this PC** (pick its executable). Those it
+can download, from their official releases: RetroArch, Dolphin, PCSX2, DuckStation, PPSSPP,
+RPCS3, shadPS4, Vita3K, Cemu, Ryujinx (Ryubing), Azahar, melonDS, DeSmuME, mGBA, SameBoy, SkyEmu,
 Gearboy, gopher64, Snes9x, bsnes, Mesen, ares, BizHawk, Gearsystem, Geargrafx, Stella, openMSX,
-Flycast, xemu, Xenia Canary, MAME, FinalBurn Neo, DOSBox Staging and DOSBox-X.
+Flycast, xemu, Xenia Canary, MAME, Supermodel, FinalBurn Neo, DOSBox Staging and DOSBox-X.
 
-- **Download** puts it in `emulators\<name>\` next to the exe (the folder can be changed there),
-  adds it to your emulators and assigns it to your platforms that have no emulator yet. Where the
+- A download goes to `emulators\<name>\` next to the exe (Settings → Storage changes the folder),
+  is added to your emulators and assigned to your platforms that have no emulator yet. Where the
   emulator supports it (Dolphin, PCSX2, DuckStation, Cemu, Ryujinx, Azahar, Xenia), it is set to
   keep its settings in its own folder.
-- **Check for updates** compares each installed one with its latest release; **Update** unpacks
-  the new version over the old one, so settings and saves in its folder stay. Close the emulator
-  first.
-- **Download cores** (RetroArch) fetches the libretro cores your platforms use from the libretro
-  buildbot.
+- Its card shows the installed version, **Open folder**, and **Update** once a newer one is known.
+  An update unpacks over the old version, so settings and saves in its folder stay. Close the
+  emulator first.
+- **Download cores** on RetroArch's card fetches the libretro cores your platforms use.
+- **About → Emulator updates** checks all of them at once.
 
 Zip, 7z and MAME's self-extracting archives are unpacked with Windows' own `tar`, so nothing extra
-ships with the launcher. Emulators installed some other way can still be added by hand below.
+ships with the launcher.
 
 Platforms without an emulator show an orange dot in the sidebar. Pressing Play on one
 takes you straight to its row in the Platforms tab.
@@ -150,7 +151,8 @@ with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers
   launcher signs in with; public collections of other users are listed but read-only.
   **Smart collections** (RomM 5, built from filters) are listed too, marked *Smart*; their games
   follow their filters, so they are read-only here.
-- **Sort**: the toolbar's sort menu is remembered between starts.
+- **Sort and view**: the toolbar's sort menu, and covers (▦) or details (☰, one row per game),
+  are remembered between starts.
 - **Play time**: each play of 30 seconds or more is sent to RomM (5.5 or later) as a play
   session, so the server shows play time per game. Played offline, sessions wait and go up when
   RomM is reachable again. Turn it off in Settings → Storage.
@@ -158,7 +160,8 @@ with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers
   Download) again fetches only the missing part.
 - **Updates**: at start the launcher asks GitHub for a newer release and offers **Update and
   restart**, which downloads it, replaces `RomM-Launcher.exe` once the launcher has closed and
-  starts the new one. Settings → Storage turns the check off or runs it now.
+  starts the new one. **About**, in the menu bar, shows the version and turns the check off or
+  runs it now.
 - **Offline**: when RomM cannot be reached (checked at start, and whenever a request gets no
   answer), a banner says so and the launcher shows **Downloaded**. Those games still play, and
   their detail panel shows what RomM last said about them. Saves are used from this PC; the ones

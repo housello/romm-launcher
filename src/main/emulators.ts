@@ -105,6 +105,8 @@ export const PRESETS: Preset[] = [
     website: "https://xenia.jp", source: gh("xenia-canary/xenia-canary-releases", "windows.*\\.zip$"), portable: { file: "portable.txt" } },
   { key: "mame", name: "MAME", exe: "mame.exe", args: '{romName} -rompath "{romDir}"', extractZip: false, platforms: ["arcade", "mame"],
     website: "https://www.mamedev.org", source: gh("mamedev/mame", "b_x64\\.exe$") },
+  { key: "supermodel", name: "Supermodel", exe: "supermodel\\.exe", args: '"{rom}" -fullscreen', extractZip: false, platforms: ["model3"],
+    website: "https://www.supermodel3.com", source: gh("trzy/Supermodel", "windows\\.zip$") },
   { key: "fbneo", name: "FinalBurn Neo", exe: "fbneo64\\.exe", args: "{romName}", extractZip: false, platforms: ["arcade", "fbneo", "neogeo", "neogeoaes", "neogeomvs"],
     website: "https://neo-source.com", source: gh("finalburnneo/FBNeo", "^windows-x86_64\\.zip$") },
   { key: "dosbox", name: "DOSBox Staging", exe: "dosbox\\.exe", args: '"{rom}" -exit', extractZip: true, platforms: ["dos"],
