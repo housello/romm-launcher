@@ -531,9 +531,9 @@ export async function launch(romId: number, emit: Emit, hooks: { onStart: () => 
   // before the emulator can open them. A sync problem never blocks the game.
   let saveCtx: SyncContext | null = null;
   let extraArgs: string[] = [];
-  const useWebdav = webdavSyncOn();
-  if (useWebdav) await syncFoldersFor(emulator, romId, emit);
-  else try {
+  // WebDAV syncs whole emulator folders at the launcher's start and close, or on
+  // demand, not around each game.
+  if (!webdavSyncOn()) try {
     const setup = await prepareSaves(emulator, mapping, game);
     extraArgs = setup.extraArgs;
     if (loadConfig().syncSaves && setup.ctx && isOffline()) {
@@ -580,13 +580,6 @@ export async function launch(romId: number, emit: Emit, hooks: { onStart: () => 
     recordSession(romId, started, ended);
     hooks.onExit();
     if (saveCtx) void syncAfterExit(saveCtx, romId, emit);
-    if (useWebdav) {
-      pushing.add(romId);
-      // Some emulators flush the save a moment after their window closes.
-      void new Promise((r) => setTimeout(r, 1500))
-        .then(() => syncFoldersFor(emulator, romId, emit))
-        .finally(() => pushing.delete(romId));
-    }
   });
 }
 
@@ -632,9 +625,10 @@ async function syncFoldersFor(emulator: EmulatorDef, romId: number, emit: Emit):
 }
 
 /** Sync the save folders of every emulator that has some (Settings → Storage → Sync now). */
-export async function syncAllFolders(emit: Emit): Promise<string[]> {
+export async function syncAllFolders(emit: Emit, emulatorIds?: string[]): Promise<string[]> {
   const out: string[] = [];
   for (const emulator of loadConfig().emulators) {
+    if (emulatorIds && !emulatorIds.includes(emulator.id)) continue;
     if (!syncFoldersOf(emulator).some((f) => f.enabled)) continue;
     out.push(`${emulator.name}: ${await syncFoldersFor({ ...emulator, path: resolvePath(emulator.path) }, 0, emit)}`);
   }

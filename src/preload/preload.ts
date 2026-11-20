@@ -29,6 +29,11 @@ contextBridge.exposeInMainWorld("romm", {
     ipcRenderer.on("update-progress", wrapped);
     return () => ipcRenderer.removeListener("update-progress", wrapped);
   },
+  onClosingSync: (listener: () => void) => {
+    const wrapped = () => listener();
+    ipcRenderer.on("closing-sync", wrapped);
+    return () => ipcRenderer.removeListener("closing-sync", wrapped);
+  },
   onConnection: (listener: (online: boolean) => void) => {
     const wrapped = (_: unknown, online: boolean) => listener(online);
     ipcRenderer.on("connection", wrapped);

@@ -14,7 +14,7 @@ import { checkEmulatorUpdates, installCores, installDir, installEmulator } from 
 import { lastVersions, rememberVersion } from "./lastVersions";
 import { applyRenames, buildPlan, undoInfo, undoLast } from "./mame";
 import { syncFoldersOf, localPathOf, storedFolderPath, webdavClient } from "./folderSync";
-import { cancel, resolveConflicts, syncAllFolders, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
+import { cancel, resolveConflicts, syncAllFolders, webdavSyncOn, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
 
 // Test data folder: ROMM_LAUNCHER_DATA keeps settings elsewhere. The packaged launcher keeps
 // everything next to its exe unless an "appdata" file is there (see paths.ts); that wins.
@@ -32,6 +32,8 @@ app.on("second-instance", () => {
 registerImageSchemePrivileges();
 
 let win: BrowserWindow | null = null;
+/** Set once the close-time save sync is done (or skipped), so the window really closes. */
+let quitting = false;
 
 function createWindow(): void {
   win = new BrowserWindow({
@@ -50,6 +52,12 @@ function createWindow(): void {
     },
   });
   win.loadFile(join(__dirname, "..", "..", "renderer", "index.html"));
+  // WebDAV: sync the save folders before closing; the window shows it and can skip it.
+  win.on("close", (event) => {
+    if (quitting || !webdavSyncOn() || !loadConfig().webdavSyncOnExit) return;
+    event.preventDefault();
+    win?.webContents.send("closing-sync");
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) shell.openExternal(url);
     return { action: "deny" };
@@ -391,7 +399,14 @@ function registerIpc(): void {
   handle("game:chooseFile", (id: number, rel: string | null) => resolveFileChoice(id, rel));
   handle("game:syncSaves", (id: number) => syncNow(id, emit));
   handle("saves:resolveConflicts", (requestId: string, answers: Record<string, "local" | "remote" | "skip"> | null) => resolveConflicts(String(requestId), answers));
-  handle("saves:syncAll", () => syncAllFolders(emit));
+  handle("saves:syncAll", (ids?: string[]) => syncAllFolders(emit, Array.isArray(ids) ? ids : loadConfig().webdavSyncEmulators));
+  handle("saves:syncTargets", () => loadConfig().emulators
+    .map((e) => ({ id: e.id, name: e.name, folders: syncFoldersOf(e).filter((f) => f.enabled).map((f) => f.name) }))
+    .filter((e) => e.folders.length));
+  handle("app:quitNow", () => {
+    quitting = true;
+    win?.close();
+  });
   handle("saves:folders", () => Object.fromEntries(loadConfig().emulators.map((e) => [e.id, syncFoldersOf(e).map((f) => ({ ...f, local: localPathOf(e, f), exists: existsSync(localPathOf(e, f)) }))])));
   handle("saves:testWebdav", async () => {
     const { dav, base } = webdavClient();

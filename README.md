@@ -226,8 +226,11 @@ Syncs the **save folders of each emulator** with a WebDAV folder, two ways:
   DuckStation memory cards, PPSSPP `SAVEDATA`, RPCS3 and shadPS4 save data, Cemu, Ryujinx and
   Azahar saves, MAME `nvram`/`cfg`/`sta`, and more. Both the portable layout (inside the emulator's
   folder) and the usual Documents/AppData locations are known. **Add folder…** adds any other.
-- The emulator's folders sync **before a game starts and after it closes**, and on demand with
-  **Sync now** (a game's details) or **Sync all now** (Settings → Storage).
+- Syncing is not tied to games: it runs **when RomM Launcher starts** and **before it closes**
+  (both on by default, Settings → Storage → *Automatic sync*; closing shows a small window with
+  *Close without syncing*), and on demand with **⟳ Sync saves** in the menu bar. That one lists the
+  emulators with save folders: tick the ones to sync. The choice is kept for the automatic syncs
+  too. **Sync now** in a game's details syncs just that game's emulator.
 - A file changed on one side only is copied to the other. **Nothing is ever deleted**: a file
   missing on one side is copied back from the other.
 - A file changed **on both sides** since the last sync is a **conflict**: nothing is overwritten

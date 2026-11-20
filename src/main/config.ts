@@ -96,6 +96,11 @@ export interface Config {
   /** Where saves sync with: RomM (per game) or a WebDAV folder (per emulator folder). */
   saveBackend: "romm" | "webdav";
   webdav: WebdavSettings;
+  /** WebDAV: sync when the launcher starts, and before it closes. */
+  webdavSyncOnStart: boolean;
+  webdavSyncOnExit: boolean;
+  /** Emulators the WebDAV sync covers (ids); unset means every one with save folders. */
+  webdavSyncEmulators?: string[];
   /** Encrypted like passwordEnc; never sent to the renderer. */
   webdavPasswordEnc: string;
   /** Where synced saves live, one folder per game; kept when a game copy is deleted. */
@@ -189,6 +194,8 @@ function defaults(): Config {
     saveBackend: "romm",
     webdav: { url: "", username: "", folder: "RomM Launcher Saves" },
     webdavPasswordEnc: "",
+    webdavSyncOnStart: true,
+    webdavSyncOnExit: true,
     saveDir: isPortable() ? "saves" : join(app.getPath("userData"), "saves"),
     emulators: [],
     platforms: {},

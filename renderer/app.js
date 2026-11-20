@@ -110,6 +110,80 @@ $("#sidebar").addEventListener("click", (e) => {
 // ------------------------------------------------------------------ offline
 
 /** Switch between the live library and the downloaded games, as RomM comes and goes. */
+// ------------------------------------------------------------------ WebDAV save sync
+
+/** The menu bar's Sync saves entry, shown while WebDAV save sync is on. */
+function renderSyncButton() {
+  $("#menu-sync").hidden = !(state.config?.syncSaves && state.config?.saveBackend === "webdav");
+}
+
+let syncRunning = null;
+
+/** Sync the given emulators (or the saved selection), one at a time. */
+function runFolderSync(ids) {
+  syncRunning ??= api("saves:syncAll", ids).finally(() => { syncRunning = null; });
+  return syncRunning;
+}
+
+/** Pick the emulators to sync, remember the pick, and sync them. */
+async function openSyncDialog() {
+  const targets = await api("saves:syncTargets").catch(() => []);
+  const box = $("#chooser");
+  const chosen = new Set(state.config.webdavSyncEmulators ?? targets.map((t) => t.id));
+  box.innerHTML = `<div class="box" role="dialog" aria-modal="true" style="max-width:640px">
+    <h2>Sync saves with WebDAV</h2>
+    <div class="msg">${targets.length ? "Choose the emulators to sync. The choice is kept for the automatic sync at start and close."
+      : "No emulator has save folders to sync: tick some in Settings → Emulators."}</div>
+    <div class="list">${targets.map((t) => `<label class="conflict" style="display:block">
+      <input type="checkbox" data-sync-id="${esc(t.id)}" ${chosen.has(t.id) ? "checked" : ""}> <b>${esc(t.name)}</b>
+      <span class="muted">${esc(t.folders.join(", "))}</span></label>`).join("")}</div>
+    <div class="msg" id="sync-status" hidden></div>
+    <div class="foot"><button data-x>Close</button>${targets.length ? '<button class="primary" data-ok>Sync</button>' : ""}</div></div>`;
+  box.hidden = false;
+  box.onclick = async (e) => {
+    if (e.target.matches("[data-x]") || e.target === box) {
+      box.hidden = true;
+      box.innerHTML = "";
+      return;
+    }
+    if (!e.target.matches("[data-ok]")) return;
+    const ids = $$("[data-sync-id]", box).filter((c) => c.checked).map((c) => c.dataset.syncId);
+    if (!ids.length) return toast("Tick at least one emulator", "error");
+    // Every one ticked is stored as "all", so emulators added later join in.
+    await save({ webdavSyncEmulators: ids.length === targets.length ? null : ids }, true);
+    e.target.disabled = true;
+    const status = $("#sync-status", box);
+    status.hidden = false;
+    status.textContent = "Syncing…";
+    try {
+      const lines = await runFolderSync(ids);
+      status.innerHTML = lines.map(esc).join("<br>") || "Nothing to sync.";
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      e.target.disabled = false;
+    }
+  };
+}
+
+/** WebDAV: before the window closes, sync (or let the user skip it). */
+window.romm.onClosingSync(async () => {
+  closeDetail();
+  const overlay = document.createElement("div");
+  overlay.id = "closing-sync";
+  overlay.innerHTML = `<div class="box"><h2>Syncing saves before closing…</h2>
+    <div class="msg">The save folders of your emulators are being synced with WebDAV.</div>
+    <div class="foot"><button id="closing-skip">Close without syncing</button></div></div>`;
+  document.body.append(overlay);
+  $("#closing-skip").onclick = () => api("app:quitNow");
+  try {
+    await runFolderSync();
+  } catch (error) {
+    console.error(error);
+  }
+  await api("app:quitNow");
+});
+
 // ------------------------------------------------------------------ signed-in user
 
 const user = { name: null };
@@ -264,6 +338,7 @@ $("#menubar").addEventListener("click", (e) => {
   if (item === "settings") openSettings();
   if (item === "about") openAbout();
   if (item === "user") openSettings("server");
+  if (item === "sync") openSyncDialog();
 });
 
 function showUpdate(update) {
@@ -1150,7 +1225,7 @@ function savesHtml(r) {
     const blocker = syncBlocker(r);
     return `<h3>Saves on WebDAV</h3>
       <div class="row" style="margin-bottom:6px"><span class="hint" style="flex:1">${esc(blocker && r.installed ? blocker
-        : `The save folders of ${r.emulator ?? "its emulator"} sync with WebDAV before each launch and after it closes (Settings → Emulators chooses them).`)}</span>
+        : `The save folders of ${r.emulator ?? "its emulator"} sync with WebDAV when RomM Launcher starts and closes, or with Sync now.`)}</span>
         ${r.installed && !blocker ? '<button data-act="sync" title="Sync this emulator\'s save folders with WebDAV now">⟳ Sync now</button>' : ""}</div>`;
   }
   const rows = [...r.saves.map((s) => ({ ...s, kind: "Save" })), ...r.states.map((s) => ({ ...s, kind: "State" }))]
@@ -1314,6 +1389,7 @@ $("#settings").addEventListener("click", (e) => {
 
 async function save(patch, quiet) {
   state.config = await api("config:set", patch);
+  renderSyncButton();
   if (!quiet) toast("Saved", "ok");
 }
 
@@ -1771,9 +1847,13 @@ async function renderStorage() {
       <label class="sync-webdav">Username</label><input class="sync-webdav" id="g-dav-user" value="${esc(c.webdav?.username ?? "")}" autocomplete="off">
       <label class="sync-webdav">Password</label><input class="sync-webdav" id="g-dav-pass" type="password" autocomplete="new-password" placeholder="${c.hasWebdavPassword ? "(saved — leave empty to keep)" : "For Nextcloud, an app password (Settings → Security)"}">
       <label class="sync-webdav">Folder</label><input class="sync-webdav" id="g-dav-folder" value="${esc(c.webdav?.folder ?? "RomM Launcher Saves")}">
-      <label class="sync-webdav"></label><div class="row sync-webdav"><button id="g-dav-test">Save &amp; test connection</button><button id="g-dav-sync">Sync all now</button><span id="g-dav-result" class="muted"></span></div>
+      <label class="sync-webdav"></label><div class="row sync-webdav"><button id="g-dav-test">Save &amp; test connection</button><button id="g-dav-sync">Sync now…</button><span id="g-dav-result" class="muted"></span></div>
+      <label class="sync-webdav">Automatic sync</label><div class="sync-webdav">
+        <label style="display:block"><input type="checkbox" id="g-dav-start" ${c.webdavSyncOnStart !== false ? "checked" : ""}> When RomM Launcher starts</label>
+        <label style="display:block;margin-top:4px"><input type="checkbox" id="g-dav-exit" ${c.webdavSyncOnExit !== false ? "checked" : ""}> Before RomM Launcher closes</label></div>
       <label class="sync-webdav"></label><div class="hint sync-webdav">Each emulator's save folders are mirrored to <code>&lt;folder&gt;/&lt;emulator&gt;/&lt;save folder&gt;</code>,
-        before a game starts and after it closes. Nothing is deleted on either side. When a file changed both here and on WebDAV,
+        when RomM Launcher starts and closes (if ticked above) and with ⟳ Sync saves in the menu bar, for the emulators you pick there.
+        Games do not sync when they start or close. Nothing is deleted on either side. When a file changed both here and on WebDAV,
         you are asked which to keep; the other copy goes to <code>save-backups</code> in the launcher's data folder.</div>
       <label>Cover image cache</label><div class="row"><span>${fmtBytes(info.imageBytes)}</span><button id="g-clear">Clear</button></div>
       <label></label><div class="row"><button class="primary" id="g-save">Save</button></div>
@@ -1828,19 +1908,12 @@ async function renderStorage() {
       $("#g-dav-result").innerHTML = `<span style="color:var(--danger)">✕ ${esc(error.message)}</span>`;
     }
   });
-  $("#g-dav-sync").addEventListener("click", async (e) => {
+  $("#g-dav-sync").addEventListener("click", async () => {
     await save(webdavPatch(), true);
-    e.target.disabled = true;
-    $("#g-dav-result").textContent = "Syncing…";
-    try {
-      const lines = await api("saves:syncAll");
-      $("#g-dav-result").textContent = lines.length ? lines.join(" · ") : "No emulator has a save folder to sync.";
-    } catch (error) {
-      $("#g-dav-result").textContent = error.message;
-    } finally {
-      e.target.disabled = false;
-    }
+    openSyncDialog();
   });
+  $$("#g-dav-start, #g-dav-exit").forEach((box) => box.addEventListener("change", () =>
+    save({ webdavSyncOnStart: $("#g-dav-start").checked, webdavSyncOnExit: $("#g-dav-exit").checked }, true)));
   $("#g-save").addEventListener("click", () => save({
     ...webdavPatch(),
     romDir: $("#g-dir").value.trim(),
@@ -2031,6 +2104,11 @@ function renderPlan() {
   state.config = await api("config:get");
   state.lastVersions = await api("versions:last").catch(() => ({}));
   if (state.config.checkUpdates !== false) void checkUpdates(true);
+  renderSyncButton();
+  // WebDAV: sync the chosen emulators' saves in the background; the main side reports results.
+  if (state.config.syncSaves && state.config.saveBackend === "webdav" && state.config.webdavSyncOnStart !== false) {
+    void runFolderSync().catch((error) => toast(`WebDAV save sync: ${error.message}`, "error"));
+  }
   if (!state.config.serverUrl) {
     openSettings("server");
     $("#platforms").innerHTML = '<div class="muted pad">Not connected</div>';

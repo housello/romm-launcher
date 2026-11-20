@@ -282,3 +282,8 @@ table.platforms td .row button { padding: 7px 9px; }
 #chooser .conflict .lbl { font-weight: 600; }
 .sync-folders label { display: block; margin-bottom: 3px; cursor: pointer; }
 .sync-folders button { margin-top: 4px; }
+
+/* Shown while the save folders sync before the window closes. */
+#closing-sync { position: fixed; inset: 0; background: #0009; display: flex; align-items: center; justify-content: center; z-index: 100; }
+#closing-sync .box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px 24px; max-width: 460px; }
+#closing-sync .foot { display: flex; justify-content: flex-end; margin-top: 14px; }
