@@ -6,7 +6,10 @@ import { baseDir, canSwitchLocation, dataDir, dataLocations, isPortable, resolve
 import { loadConfig, publicConfig, updateConfig } from "./config";
 import { saveModeOf, DEFAULT_CORES, detectRetroArch, listCores, PRESETS } from "./emulators";
 import { clearImageCache, imageCacheSize, registerImageProtocol, registerImageSchemePrivileges } from "./images";
-import { getInstalled, listInstalled } from "./library";
+import { getInstalled, listInstalled, metaOf, putInstalled } from "./library";
+import { checkServer, isOffline, isUnreachable, noteFailure, onConnectionChange } from "./connection";
+import { flushSessions } from "./playSessions";
+import { checkForUpdate, cleanUpUpdate, installUpdate, type UpdateInfo } from "./updater";
 import { lastVersions, rememberVersion } from "./lastVersions";
 import { applyRenames, buildPlan, undoInfo, undoLast } from "./mame";
 import { cancel, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
@@ -62,7 +65,9 @@ function handle(channel: string, fn: (...args: any[]) => unknown): void {
     try {
       return { ok: true, value: await fn(...args) };
     } catch (error) {
-      const code = error instanceof LaunchError ? error.code : error instanceof ApiError ? `http-${error.status}` : "failed";
+      noteFailure(error);
+      const code = isUnreachable(error) ? "offline"
+        : error instanceof LaunchError ? error.code : error instanceof ApiError ? `http-${error.status}` : "failed";
       console.error(`[ipc] ${channel}`, error);
       return { ok: false, error: (error as Error).message, code };
     }
@@ -98,6 +103,8 @@ function romQuery(params: Record<string, unknown>): string {
   }
   const collection = num(params.collectionId);
   if (collection) q.append("collection_id", collection);
+  const smartCollection = num(params.smartCollectionId);
+  if (smartCollection) q.append("smart_collection_id", smartCollection);
   if (typeof params.search === "string" && params.search.trim()) q.append("search_term", params.search.trim());
   appendFilters(q, params.filters);
   // One card per game: RomM folds other versions (regions, revisions) into sibling_roms.
@@ -187,30 +194,51 @@ function registerIpc(): void {
   });
 
   handle("collections:list", async () => {
-    try {
-      const [list, me] = await Promise.all([apiGet<any[]>("/api/collections"), apiGet<{ id?: number }>("/api/users/me").catch(() => ({}) as { id?: number })]);
-      return list.map((c) => ({
+    const [list, smart, me] = await Promise.all([
+      apiGet<any[]>("/api/collections"),
+      // Smart collections (RomM 5.x) are built from filters; older servers have none.
+      apiGet<any[]>("/api/collections/smart").catch(() => [] as any[]),
+      apiGet<{ id?: number }>("/api/users/me").catch(() => ({}) as { id?: number }),
+    ]);
+    const cover = (c: any) => c.path_cover_small || (Array.isArray(c.path_covers_small) ? c.path_covers_small[0] : null) || c.url_cover || null;
+    return [
+      ...list.map((c) => ({
+        key: String(c.id),
         id: c.id,
+        smart: false,
         name: c.name,
         romCount: c.rom_count ?? c.rom_ids?.length ?? 0,
         isFavorite: !!c.is_favorite,
         description: c.description ?? "",
         owner: c.owner_username ?? "",
-        cover: c.path_cover_small || (Array.isArray(c.path_covers_small) ? c.path_covers_small[0] : null) || c.url_cover || null,
+        cover: cover(c),
         isPublic: !!c.is_public,
         // Only your own collections can be changed; public ones of other users are read-only.
         mine: me.id === undefined || c.user_id === undefined || c.user_id === me.id,
-      }));
-    } catch {
-      return [];
-    }
+      })),
+      ...(Array.isArray(smart) ? smart : []).map((c) => ({
+        key: `smart:${c.id}`,
+        id: c.id,
+        smart: true,
+        name: c.name,
+        romCount: c.rom_count ?? c.rom_ids?.length ?? 0,
+        isFavorite: false,
+        description: c.description ?? "",
+        owner: c.owner_username ?? "",
+        cover: cover(c),
+        isPublic: !!c.is_public,
+        // Its games follow its filters, so games cannot be added or removed by hand.
+        mine: false,
+      })),
+    ];
   });
 
   // Values for the filter menus, for the current view (only what occurs there).
-  handle("roms:filterValues", async (params: { platformId?: number; collectionId?: number }) => {
+  handle("roms:filterValues", async (params: { platformId?: number; collectionId?: number; smartCollectionId?: number }) => {
     const q = new URLSearchParams({ limit: "1", offset: "0", with_filter_values: "true" });
     if (typeof params?.platformId === "number") q.append("platform_ids", String(params.platformId));
     if (typeof params?.collectionId === "number") q.append("collection_id", String(params.collectionId));
+    if (typeof params?.smartCollectionId === "number") q.append("smart_collection_id", String(params.smartCollectionId));
     const body = await apiGet<{ filter_values?: Record<string, unknown> }>(`/api/roms?${q}`);
     const out: Record<string, string[]> = {};
     for (const key of LIST_FILTERS) {
@@ -282,8 +310,19 @@ function registerIpc(): void {
   });
 
   handle("rom:get", async (id: number) => {
-    const r = await apiGet<any>(`/api/roms/${id}`);
+    if (isOffline()) return offlineDetail(id);
+    let r: any;
+    try {
+      r = await apiGet<any>(`/api/roms/${id}`);
+    } catch (error) {
+      if (!isUnreachable(error)) throw error;
+      noteFailure(error);
+      return offlineDetail(id);
+    }
     const resolved = resolveEmulator([r.platform_slug, r.platform_fs_slug]);
+    // Refresh what a downloaded game shows offline.
+    const local = getInstalled(id);
+    if (local) putInstalled({ ...local, meta: metaOf(r) });
     return {
       id: r.id,
       name: r.name || r.fs_name_no_ext || r.fs_name,
@@ -348,6 +387,22 @@ function registerIpc(): void {
     if (game) shell.openPath(game.dir);
   });
   handle("installed:list", () => listInstalled());
+  handle("update:check", () => checkForUpdate());
+  handle("update:install", (update: UpdateInfo) =>
+    installUpdate(update, (received, total) => {
+      if (win && !win.isDestroyed()) win.webContents.send("update-progress", { received, total });
+    }),
+  );
+  handle("connection:status", () => !isOffline());
+  handle("connection:check", async () => {
+    const online = await checkServer();
+    // Left over from an earlier run spent offline.
+    if (online) {
+      void syncPendingSaves();
+      void flushSessions();
+    }
+    return online;
+  });
   handle("running:list", () => runningGames());
 
   handle("emulators:presets", () => ({ presets: PRESETS, defaultCores: DEFAULT_CORES }));
@@ -415,11 +470,71 @@ function applyTheme(): void {
   nativeTheme.themeSource = theme === "light" || theme === "dark" ? theme : "system";
 }
 
+/** A downloaded game's detail panel from its local record, for when RomM is unreachable. */
+function offlineDetail(id: number) {
+  const game = getInstalled(id);
+  if (!game) throw new LaunchError("RomM cannot be reached, and this game is not downloaded.", "offline");
+  const meta = game.meta;
+  const resolved = resolveEmulator([game.platformSlug]);
+  return {
+    id,
+    offline: true,
+    name: game.name,
+    fsName: game.launchFile,
+    summary: meta?.summary ?? "",
+    platformSlug: game.platformSlug,
+    platformName: game.platformName,
+    cover: meta?.cover || game.coverPath,
+    coverUrl: game.coverUrl ?? null,
+    screenshots: [],
+    sizeBytes: game.sizeBytes,
+    files: [],
+    regions: meta?.regions ?? [],
+    languages: meta?.languages ?? [],
+    genres: meta?.genres ?? [],
+    companies: meta?.companies ?? [],
+    year: meta?.year ?? null,
+    emulator: resolved ? resolved.emulator.name + (resolved.mapping.core ? ` (${resolved.mapping.core})` : "") : null,
+    installed: game,
+    versions: [],
+    running: runningGames().includes(id),
+    webUrl: `${loadConfig().serverUrl}/rom/${id}`,
+    collections: [],
+    saveMode: resolved ? saveModeOf(resolved.emulator) : "off",
+    syncSaves: loadConfig().syncSaves,
+    saves: [],
+    states: [],
+  };
+}
+
+/** Upload the saves of games played while RomM was unreachable. */
+async function syncPendingSaves(): Promise<void> {
+  for (const game of listInstalled().filter((g) => g.savesPending)) {
+    try {
+      const message = await syncNow(game.romId, emit);
+      const current = getInstalled(game.romId);
+      if (current) putInstalled({ ...current, savesPending: false });
+      emit({ romId: game.romId, type: "notice", message: `${game.name}: ${message}`, level: "ok" });
+    } catch (error) {
+      if (isUnreachable(error)) return;
+      console.error(`[saves] pending sync of ${game.romId}`, error);
+    }
+  }
+}
+
 app.whenReady().then(() => {
   applyTheme();
   registerImageProtocol();
   registerIpc();
   createWindow();
+  void cleanUpUpdate();
+  onConnectionChange((online) => {
+    if (win && !win.isDestroyed()) win.webContents.send("connection", online);
+    if (online) {
+      void syncPendingSaves();
+      void flushSessions();
+    }
+  });
 });
 
 app.on("window-all-closed", () => app.quit());

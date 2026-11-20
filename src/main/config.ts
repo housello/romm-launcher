@@ -52,6 +52,17 @@ export interface Config {
   pageSize: number;
   /** Show one card per game, folding other versions (RomM siblings) into it. */
   groupVersions: boolean;
+  /** Send play sessions (start, end, length) to RomM, which shows play time per game. */
+  reportPlayTime: boolean;
+  /** Look for a newer launcher release on GitHub at start. */
+  checkUpdates: boolean;
+  /** The game list's sort, as the toolbar menu's value ("name:asc", "created_at:desc", …). */
+  sort: string;
+  /**
+   * Where a multi-file game's files go: "subfolder" keeps them in a folder named after
+   * the game, "flat" puts them straight in the platform's download folder.
+   */
+  multiFileLayout: "subfolder" | "flat";
   /** "system" follows Windows' light/dark mode. */
   theme: "system" | "light" | "dark";
   /** Pull saves/states from RomM before a launch and push changes after exit. */
@@ -127,6 +138,10 @@ function defaults(): Config {
     minimizeOnLaunch: true,
     pageSize: 60,
     groupVersions: true,
+    sort: "name:asc",
+    reportPlayTime: true,
+    checkUpdates: true,
+    multiFileLayout: "subfolder",
     theme: "system",
     syncSaves: true,
     saveDir: isPortable() ? "saves" : join(app.getPath("userData"), "saves"),

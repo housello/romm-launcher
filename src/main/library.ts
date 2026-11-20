@@ -1,5 +1,8 @@
 // Index of games downloaded to this PC. Only downloaded games are recorded —
-// the RomM library itself is always browsed live, never mirrored.
+// the RomM library itself is always browsed live, never mirrored. Each record
+// keeps a snapshot of the game's details, so it can still be shown and played
+// offline. A JSON file read once into memory: it stays small (a few hundred
+// bytes per game), so a database would only add start-up and write cost.
 
 import { app } from "electron";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -31,6 +34,35 @@ export interface InstalledGame {
   coverUrl?: string | null;
   installedAt: number;
   lastPlayed: number | null;
+  /** The game's details as RomM last gave them, shown when the server is unreachable. */
+  meta?: OfflineMeta;
+  /** Saves changed while RomM could not be reached; uploaded once it is back. */
+  savesPending?: boolean;
+}
+
+/** The offline snapshot of a RomM rom (API shape). */
+export function metaOf(r: any): OfflineMeta {
+  const date = r.metadatum?.first_release_date ?? r.first_release_date;
+  return {
+    summary: r.summary ?? "",
+    year: date ? new Date(Number(date)).getFullYear() : null,
+    companies: r.metadatum?.companies ?? r.companies ?? [],
+    genres: r.metadatum?.genres ?? r.genres ?? [],
+    regions: r.regions ?? [],
+    languages: r.languages ?? [],
+    cover: r.path_cover_large || r.path_cover_small || null,
+  };
+}
+
+export interface OfflineMeta {
+  summary: string;
+  year: number | null;
+  companies: string[];
+  genres: string[];
+  regions: string[];
+  languages: string[];
+  /** Larger cover than coverPath, for the detail panel. */
+  cover: string | null;
 }
 
 const file = () => join(dataDir(), "installed.json");

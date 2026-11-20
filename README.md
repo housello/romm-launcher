@@ -127,12 +127,33 @@ with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers
   add it to one of your RomM collections or a new one (private or public). The detail panel
   lists the game's collections; ✕ removes it from one. Collections belong to the RomM user the
   launcher signs in with; public collections of other users are listed but read-only.
+  **Smart collections** (RomM 5, built from filters) are listed too, marked *Smart*; their games
+  follow their filters, so they are read-only here.
+- **Sort**: the toolbar's sort menu is remembered between starts.
+- **Play time**: each play of 30 seconds or more is sent to RomM (5.5 or later) as a play
+  session, so the server shows play time per game. Played offline, sessions wait and go up when
+  RomM is reachable again. Turn it off in Settings → Storage.
+- **Interrupted downloads** resume: the unfinished `.part` file is kept, and pressing Play (or
+  Download) again fetches only the missing part.
+- **Updates**: at start the launcher asks GitHub for a newer release and offers **Update and
+  restart**, which downloads it, replaces `RomM-Launcher.exe` once the launcher has closed and
+  starts the new one. Settings → Storage turns the check off or runs it now.
+- **Offline**: when RomM cannot be reached (checked at start, and whenever a request gets no
+  answer), a banner says so and the launcher shows **Downloaded**. Those games still play, and
+  their detail panel shows what RomM last said about them. Saves are used from this PC; the ones
+  changed meanwhile upload by themselves once RomM answers again (checked every 20 seconds, or
+  with **Retry now**). Collections, favourites and browsing the library need the server.
 
 ### Where games are downloaded
 
 `<download folder>\<platform slug>\rom.ext`, with multi-file games in their own folder
 (`<platform slug>\<game folder>\...`), the same layout as a RomM library. The download folder
 is set in Settings → Storage; each platform can point somewhere else in Settings → Platforms.
+
+Settings → Storage → **Multi-file games → Flat** puts a multi-file game's files straight in the
+platform folder instead, without the game folder. A game whose files would replace a different
+file another downloaded game uses (two games' `disc1.bin`) still gets its own folder. The choice
+applies to games downloaded after it.
 
 If a platform points at a folder that already holds your ROMs, a game whose file is already
 there with the right size is used as-is, without downloading. **Delete local copy** only

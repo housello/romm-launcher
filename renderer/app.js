@@ -66,7 +66,7 @@ const state = {
 
 async function loadSidebar() {
   try {
-    const [platforms, collections] = await Promise.all([api("platforms:list"), api("collections:list")]);
+    const [platforms, collections] = await Promise.all([api("platforms:list"), api("collections:list").catch(() => [])]);
     state.platforms = platforms;
     state.collections = collections;
   } catch (error) {
@@ -100,14 +100,96 @@ $("#sidebar").addEventListener("click", (e) => {
     setView({ kind: "platform", id: p.id, title: p.name, slug: p.slug });
   }
   if (a.dataset.collection) {
-    const c = state.collections.find((x) => x.id === Number(a.dataset.collection));
+    const c = state.collections.find((x) => !x.smart && x.id === Number(a.dataset.collection));
     setView({ kind: "collection", id: c.id, title: c.name });
   }
 });
 
 // ------------------------------------------------------------------ grid
 
+// ------------------------------------------------------------------ offline
+
+/** Switch between the live library and the downloaded games, as RomM comes and goes. */
+function setOnline(online) {
+  if (state.online === online) return;
+  state.online = online;
+  $("#offline-banner").hidden = online;
+  if (online) {
+    toast("RomM is reachable again", "ok");
+    loadSidebar();
+    if (state.view.kind === "installed") reload();
+  } else if (state.view.kind !== "installed" && state.view.kind !== "settings") {
+    setView({ kind: "installed", title: "Downloaded" });
+  }
+}
+
+window.romm.onConnection((online) => setOnline(online));
+
+$("#offline-retry").addEventListener("click", async () => {
+  const button = $("#offline-retry");
+  button.disabled = true;
+  try {
+    if (!(await api("connection:check"))) toast("RomM still cannot be reached", "error");
+  } finally {
+    button.disabled = false;
+  }
+});
+
+// ------------------------------------------------------------------ updates
+
+/** Look for a newer launcher; `quiet` shows nothing when there is none or GitHub fails. */
+async function checkUpdates(quiet) {
+  let update;
+  try {
+    update = await api("update:check");
+  } catch (error) {
+    if (!quiet) toast(`Could not check for updates: ${error.message}`, "error");
+    return;
+  }
+  if (!update) {
+    if (!quiet) toast(`RomM Launcher is up to date`, "ok");
+    return;
+  }
+  showUpdate(update);
+}
+
+function showUpdate(update) {
+  const banner = $("#update-banner");
+  banner.hidden = false;
+  banner.innerHTML = `<span>RomM Launcher ${esc(update.version)} is available (you have ${esc(update.current)}).</span>
+    ${update.canInstall ? '<button class="primary" data-up="install">Update and restart</button>' : ""}
+    <button data-up="notes">${update.canInstall ? "What's new" : "Download"}</button>
+    <button data-up="later">Later</button>`;
+  banner.onclick = async (e) => {
+    const act = e.target.closest("[data-up]")?.dataset.up;
+    if (act === "later") banner.hidden = true;
+    if (act === "notes") api("open:external", update.notesUrl);
+    if (act !== "install") return;
+    if (state.jobs.size || (await api("running:list")).length) {
+      toast("Wait for downloads and running games to finish first", "error");
+      return;
+    }
+    banner.innerHTML = `<span id="update-status">Downloading RomM Launcher ${esc(update.version)}…</span>`;
+    const stop = window.romm.onUpdateProgress(({ received, total }) => {
+      $("#update-status").textContent = `Downloading RomM Launcher ${update.version}… ${fmtBytes(received)}${total ? " / " + fmtBytes(total) : ""}`;
+    });
+    try {
+      // On success the launcher closes and the new one starts.
+      await api("update:install", update);
+    } catch (error) {
+      stop();
+      toast(`Update failed: ${error.message}`, "error");
+      showUpdate(update);
+    }
+  };
+}
+
 function setView(view, search = "") {
+  if (state.online === false && view.kind !== "installed") {
+    toast("Offline: only downloaded games are available until RomM is reachable", "");
+    view = { kind: "installed", title: "Downloaded" };
+    search = "";
+  }
   state.view = view;
   // Each view starts unfiltered, unless the sidebar search sent us here.
   state.search = search;
@@ -176,7 +258,7 @@ async function loadMore() {
     filters: favFirst ? partFilters(state.phase === 0) : base,
   };
   if (state.view.kind === "platform") params.platformId = state.view.id;
-  if (state.view.kind === "collection") params.collectionId = state.view.id;
+  if (state.view.kind === "collection") params[state.view.smart ? "smartCollectionId" : "collectionId"] = state.view.id;
   const firstPage = state.offset === 0;
   if (firstPage) showLoading();
   renderListFoot();
@@ -355,7 +437,11 @@ $("#view-search").addEventListener("input", () => {
     reload();
   }, 300);
 });
-$("#sort").addEventListener("change", () => { state.sort = $("#sort").value; reload(); });
+$("#sort").addEventListener("change", () => {
+  state.sort = $("#sort").value;
+  reload();
+  api("config:set", { sort: state.sort }).then((c) => { state.config = c; }).catch(() => {});
+});
 $("#zoom").addEventListener("input", () => {
   document.documentElement.style.setProperty("--card", $("#zoom").value + "px");
   maybeLoadMore();
@@ -411,11 +497,11 @@ function filtersChanged() {
 
 async function filterValuesForView() {
   const v = state.view;
-  const key = `${v.kind}:${v.id ?? ""}`;
+  const key = `${v.kind}:${v.smart ? "smart:" : ""}${v.id ?? ""}`;
   if (!filterValueCache.has(key)) {
     const params = {};
     if (v.kind === "platform") params.platformId = v.id;
-    if (v.kind === "collection") params.collectionId = v.id;
+    if (v.kind === "collection") params[v.smart ? "smartCollectionId" : "collectionId"] = v.id;
     filterValueCache.set(key, api("roms:filterValues", params).catch((e) => { filterValueCache.delete(key); throw e; }));
   }
   const values = { ...(await filterValueCache.get(key)) };
@@ -546,7 +632,7 @@ async function addToCollectionFlow(romId, romName, alreadyIn = []) {
   }
   const items = cols.map((c) => ({ value: c.id, label: c.name, sub: `${c.romCount} games${c.isPublic ? " · public" : ""}${c.isFavorite ? " · favourites" : ""}` }));
   items.push({ value: "__new", label: "+ New collection…" });
-  if (state.view.kind === "collection" && state.collections.some((c) => c.id === state.view.id && c.mine !== false)) {
+  if (state.view.kind === "collection" && !state.view.smart && state.collections.some((c) => !c.smart && c.id === state.view.id && c.mine !== false)) {
     items.push({ value: "__remove", label: `− Remove from “${state.view.title}”` });
   }
   const pick = await choose({ title: "Add to collection", message: romName, items, selected: items[0].value, okLabel: "OK" });
@@ -607,8 +693,8 @@ async function renderCollectionsPage() {
   $("#view-count").textContent = `${cols.length} collection${cols.length === 1 ? "" : "s"}`;
   const card = (c) => {
     const src = img(c.cover);
-    const kind = [c.isFavorite ? "Favourites" : "", c.isPublic ? "Public" : "Private", c.mine ? "" : `by ${c.owner}`].filter(Boolean).join(" · ");
-    return `<div class="card" data-coll="${c.id}" title="${esc(c.description || c.name)}">
+    const kind = [c.isFavorite ? "Favourites" : "", c.smart ? "Smart" : "", c.isPublic ? "Public" : "Private", c.mine || c.smart ? "" : `by ${c.owner}`].filter(Boolean).join(" · ");
+    return `<div class="card" data-coll="${esc(c.key)}" title="${esc(c.description || c.name)}">
       <div class="cover">${src ? `<img loading="lazy" src="${esc(src)}" alt="">` : ""}<span>${src ? "" : esc(c.name)}</span></div>
       <span class="vbadge">${c.romCount} game${c.romCount === 1 ? "" : "s"}</span>
       ${c.mine && !c.isFavorite ? `<button class="coll-del" data-del-coll="${c.id}" title="Delete this collection">✕</button>` : ""}
@@ -626,7 +712,7 @@ async function collectionsPageClick(e) {
   const del = e.target.closest("[data-del-coll]");
   if (del) {
     e.stopPropagation();
-    const c = state.collections.find((x) => x.id === Number(del.dataset.delColl));
+    const c = state.collections.find((x) => !x.smart && x.id === Number(del.dataset.delColl));
     if (!c || !confirm(`Delete the collection “${c.name}”?\n\nOnly the collection is deleted; its ${c.romCount} games stay in your library.`)) return;
     try {
       await api("collections:delete", c.id);
@@ -649,8 +735,8 @@ async function collectionsPageClick(e) {
   }
   const card = e.target.closest("[data-coll]");
   if (card) {
-    const c = state.collections.find((x) => x.id === Number(card.dataset.coll));
-    if (c) setView({ kind: "collection", id: c.id, title: c.name });
+    const c = state.collections.find((x) => x.key === card.dataset.coll);
+    if (c) setView({ kind: "collection", id: c.id, smart: c.smart, title: c.name });
   }
 }
 
@@ -856,9 +942,9 @@ function renderDetail() {
         <div class="versions">${r.versions.map((v) => `<div class="opt ${v.id === r.id ? "cur" : ""}" data-version="${v.id}" title="${esc(v.name)}">
           <span class="lbl">${esc(v.fileName || v.name)}</span>${v.id === lastVersionOf(r.versions) ? '<span class="chip">▶ last played</span>' : ""}${v.installed ? '<span class="chip">✓ downloaded</span>' : ""}</div>`).join("")}</div>
         <div class="hint">Play / Download apply to the highlighted version. Playing it here also makes it the version ▶ on the card starts.</div>` : ""}
-      <h3>Collections</h3>
+      ${r.offline ? '<div class="hint">Offline: details as RomM last gave them.</div>' : `<h3>Collections</h3>
       <div class="chips">${(r.collections ?? []).map((c) => `<span class="chip col-chip">${esc(c.name)}<button data-remove-col="${c.id}" title="Remove from this collection">✕</button></span>`).join("")}
-        <button class="chip" data-act="addcol">+ Add to collection</button></div>
+        <button class="chip" data-act="addcol">+ Add to collection</button></div>`}
       ${r.summary ? `<h3>Summary</h3><div class="summary">${esc(r.summary)}</div>` : ""}
       ${installed ? `<h3>Downloaded files</h3><div class="files">${installed.files.map((f) => `
         <div><label><input type="radio" name="launch" value="${esc(f)}" ${f === installed.launchFile ? "checked" : ""}> ${esc(f)}</label></div>`).join("")}
@@ -875,7 +961,9 @@ function savesHtml(r) {
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
   const status = !r.syncSaves ? "Save sync is turned off (Settings → Storage)."
     : r.saveMode === "off" ? "Save sync is off for this emulator (Settings → Emulators)."
+    : r.offline ? "Offline: saves are kept on this PC and upload when RomM is reachable again."
     : "Pulled before each launch, uploaded when the emulator closes.";
+  if (r.offline) return `<h3>Saves</h3><div class="hint">${esc(status)}</div>`;
   return `<h3>Saves on RomM</h3>
     <div class="hint" style="margin-bottom:6px">${esc(status)}</div>
     ${rows.length ? `<div class="files">${rows.map((s) => `<div><span>${s.kind}: ${esc(s.name)}${s.emulator ? ` <span class="muted">(${esc(s.emulator)})</span>` : ""}</span>
@@ -897,10 +985,10 @@ function renderDetailActions() {
       : busy ? `<button class="primary" disabled>Working…</button><button data-act="cancel">Cancel</button>`
       : `<button class="primary" data-act="play">▶ Play</button>`}
     ${!r.installed && !busy && !running ? '<button data-act="install">⭳ Download only</button>' : ""}
-    ${(r.collections ?? []).some((c) => c.isFavorite) ? '<button data-act="unfav" title="Remove from your RomM favourites">★ Favourite</button>' : '<button data-act="fav" title="Add to your RomM favourites">☆ Favourite</button>'}
-    ${r.installed && !busy && !running && r.syncSaves && r.saveMode !== "off" ? '<button data-act="sync">⟳ Sync saves</button>' : ""}
+    ${r.offline ? "" : (r.collections ?? []).some((c) => c.isFavorite) ? '<button data-act="unfav" title="Remove from your RomM favourites">★ Favourite</button>' : '<button data-act="fav" title="Add to your RomM favourites">☆ Favourite</button>'}
+    ${r.installed && !busy && !running && r.syncSaves && r.saveMode !== "off" && !r.offline ? '<button data-act="sync">⟳ Sync saves</button>' : ""}
     ${r.installed && !busy && !running ? '<button data-act="folder">Open folder</button><button class="danger" data-act="uninstall">Delete local copy</button>' : ""}
-    <button data-act="web">Open in RomM</button>`;
+    ${r.offline ? "" : '<button data-act="web">Open in RomM</button>'}`;
   if (busy) {
     prog.hidden = false;
     const pct = job.total ? (job.received / job.total) * 100 : 0;
@@ -1306,9 +1394,15 @@ async function renderStorage() {
       : where ? `<label>Launcher data</label><div class="hint">${esc(where.dataDir)}</div>` : ""}
       <label>Game download folder</label><div class="row"><input id="g-dir" value="${esc(c.romDir)}"><button id="g-browse">Browse…</button></div>
       <label></label><div class="hint">Games are kept here after the first play so they start instantly next time. Currently ${info.romCount} games, ${fmtBytes(info.romBytes)}.</div>
+      <label>Multi-file games</label><div>
+        <label style="display:block"><input type="radio" name="g-layout" value="subfolder" ${c.multiFileLayout !== "flat" ? "checked" : ""}> In a folder named after the game <span class="muted">roms\\psx\\Game (USA)\\…</span></label>
+        <label style="display:block;margin-top:4px"><input type="radio" name="g-layout" value="flat" ${c.multiFileLayout === "flat" ? "checked" : ""}> Flat, straight in the platform folder <span class="muted">roms\\psx\\…</span></label></div>
+      <label></label><div class="hint">Applies to games downloaded from now on. Flat: two games whose files have the same name (for example <code>disc1.bin</code>) would overwrite each other.</div>
       <label>Games per page</label><input id="g-page" type="number" min="20" max="500" value="${c.pageSize}">
       <label></label><label><input type="checkbox" id="g-min" ${c.minimizeOnLaunch ? "checked" : ""}> Minimize the launcher while a game is running</label>
       <label>Versions</label><label><input type="checkbox" id="g-group" ${c.groupVersions ? "checked" : ""}> One card per game; other versions (regions, revisions) are chosen when playing</label>
+      <label>Updates</label><div class="row"><label><input type="checkbox" id="g-updates" ${c.checkUpdates !== false ? "checked" : ""}> Look for a new RomM Launcher at start (asks GitHub)</label><button id="g-check-updates">Check now</button></div>
+      <label>Play time</label><label><input type="checkbox" id="g-playtime" ${c.reportPlayTime !== false ? "checked" : ""}> Send play sessions to RomM, which shows play time per game (RomM 5.5 or later; sent later when played offline)</label>
       <label>Save sync</label><label><input type="checkbox" id="g-sync" ${c.syncSaves ? "checked" : ""}> Sync saves and save states with RomM</label>
       <label>Save folder</label><div class="row"><input id="g-saves" value="${esc(c.saveDir)}"><button id="g-browse-saves">Browse…</button></div>
       <label></label><div class="hint">Synced saves live here, one folder per game, and are kept when you delete a game's local copy.
@@ -1320,6 +1414,7 @@ async function renderStorage() {
     const dir = await api("dialog:pickFolder");
     if (dir) $("#g-dir").value = dir;
   });
+  $("#g-check-updates").addEventListener("click", () => checkUpdates(false));
   $("#g-clear").addEventListener("click", async () => { await api("cache:clearImages"); renderStorage(); toast("Image cache cleared", "ok"); });
   $$('[name="g-where"]').forEach((r) => r.addEventListener("change", async () => {
     const toLocal = r.value === "local";
@@ -1340,7 +1435,10 @@ async function renderStorage() {
     pageSize: Math.max(20, Math.min(500, Number($("#g-page").value) || 60)),
     minimizeOnLaunch: $("#g-min").checked,
     syncSaves: $("#g-sync").checked,
+    reportPlayTime: $("#g-playtime").checked,
+    checkUpdates: $("#g-updates").checked,
     groupVersions: $("#g-group").checked,
+    multiFileLayout: $('[name="g-layout"]:checked')?.value === "flat" ? "flat" : "subfolder",
     saveDir: $("#g-saves").value.trim(),
   }));
   $("#g-browse-saves").addEventListener("click", async () => {
@@ -1521,11 +1619,24 @@ function renderPlan() {
 (async function boot() {
   state.config = await api("config:get");
   state.lastVersions = await api("versions:last").catch(() => ({}));
+  if (state.config.checkUpdates !== false) void checkUpdates(true);
   if (!state.config.serverUrl) {
     openSettings("server");
     $("#platforms").innerHTML = '<div class="muted pad">Not connected</div>';
     return;
   }
+  // The sort chosen last time, if the menu still offers it.
+  if ([...$("#sort").options].some((o) => o.value === state.config.sort)) {
+    state.sort = state.config.sort;
+    $("#sort").value = state.sort;
+  }
+  if (!(await api("connection:check").catch(() => false))) {
+    $("#platforms").innerHTML = '<div class="muted pad">Offline</div>';
+    state.online = true;
+    setOnline(false);
+    return;
+  }
+  state.online = true;
   loadSidebar();
   setView({ kind: "all", title: "All games" });
 })();

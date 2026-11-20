@@ -218,3 +218,27 @@ table.platforms td .row button { padding: 7px 9px; }
 .card .coll-del { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; padding: 0; border-radius: 50%; background: #000b; border: 0; color: #fff; opacity: 0; }
 .card:hover .coll-del { opacity: 1; }
 .card .coll-del:hover { background: var(--danger); }
+
+/* Shown while RomM cannot be reached. */
+#offline-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: color-mix(in srgb, var(--warn) 18%, var(--panel));
+  border-bottom: 1px solid var(--warn);
+}
+#offline-banner[hidden] { display: none; }
+#offline-banner span { flex: 1; }
+
+/* A newer launcher release. */
+#update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+  border-bottom: 1px solid var(--accent);
+}
+#update-banner[hidden] { display: none; }
+#update-banner span { flex: 1; }

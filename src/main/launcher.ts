@@ -6,11 +6,13 @@ import { createWriteStream, existsSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { apiFetch, apiGet } from "./api";
 import { loadConfig, type EmulatorDef, type PlatformMapping } from "./config";
 import { buildArgs } from "./emulators";
-import { getInstalled, listInstalled, putInstalled, removeInstalled, type InstalledGame } from "./library";
+import { getInstalled, listInstalled, metaOf, putInstalled, removeInstalled, type InstalledGame } from "./library";
+import { checkServer, isOffline, noteFailure } from "./connection";
+import { recordSession } from "./playSessions";
 import { findChdFolder, isArcade, setNameOf } from "./chd";
 import { resolvePath } from "./paths";
 import { readZipFiles } from "./zip";
@@ -53,7 +55,7 @@ interface RomDetail {
 }
 
 export class LaunchError extends Error {
-  constructor(message: string, public code: "no-emulator" | "failed" | "cancelled" = "failed") {
+  constructor(message: string, public code: "no-emulator" | "failed" | "cancelled" | "offline" = "failed") {
     super(message);
   }
 }
@@ -171,15 +173,40 @@ function relativeName(rom: RomDetail, file: RomFile): string {
   return safeRelative(file.file_name);
 }
 
+/**
+ * Download one file to `dest`, through `dest`.part. An interrupted download keeps
+ * its .part, and the next attempt asks only for the missing bytes (HTTP Range).
+ * Returns the file's full size.
+ */
 async function downloadTo(path: string, dest: string, signal: AbortSignal, onProgress: (received: number, total: number) => void): Promise<number> {
-  const response = await apiFetch(path, { signal, headers: { Accept: "*/*" } });
-  if (!response.ok || !response.body) throw new LaunchError(`Download failed: HTTP ${response.status}`);
-  if ((response.headers.get("content-type") ?? "").includes("text/html")) throw new LaunchError("Server returned a web page instead of the file (check credentials).");
-  const total = Number(response.headers.get("content-length") ?? 0);
-  let received = 0;
-  let last = 0;
   await mkdir(dirname(dest), { recursive: true });
   const part = dest + ".part";
+  let offset = 0;
+  try {
+    offset = statSync(part).size;
+  } catch {
+    /* nothing to resume */
+  }
+  const headers: Record<string, string> = { Accept: "*/*" };
+  if (offset) headers.Range = `bytes=${offset}-`;
+  const response = await apiFetch(path, { signal, headers });
+  if (offset && response.status === 416) {
+    // The .part already holds the whole file.
+    await rename(part, dest);
+    onProgress(offset, offset);
+    return offset;
+  }
+  if (!response.ok || !response.body) throw new LaunchError(`Download failed: HTTP ${response.status}`);
+  if ((response.headers.get("content-type") ?? "").includes("text/html")) throw new LaunchError("Server returned a web page instead of the file (check credentials).");
+  // A 206 must continue exactly where the .part ends; anything else starts over.
+  const range = /^bytes (\d+)-\d+\/(\d+|\*)/.exec(response.headers.get("content-range") ?? "");
+  const resuming = offset > 0 && response.status === 206 && Number(range?.[1]) === offset;
+  if (!resuming) offset = 0;
+  const length = Number(response.headers.get("content-length") ?? 0);
+  const total = length ? offset + length : 0;
+  let received = offset;
+  let last = 0;
+  if (resuming) console.info(`[download] resuming ${basename(dest)} at ${offset} bytes`);
   const source = Readable.fromWeb(response.body as never);
   source.on("data", (chunk: Buffer) => {
     received += chunk.length;
@@ -189,13 +216,10 @@ async function downloadTo(path: string, dest: string, signal: AbortSignal, onPro
       onProgress(received, total);
     }
   });
-  try {
-    await pipeline(source, createWriteStream(part), { signal });
-    await rename(part, dest);
-  } catch (error) {
-    await rm(part, { force: true });
-    throw error;
-  }
+  // Kept on failure or cancel, so the next attempt resumes it.
+  await pipeline(source, createWriteStream(part, { flags: resuming ? "a" : "w" }), { signal });
+  if (total && received !== total) throw new LaunchError(`Download of ${basename(dest)} ended early; press Play again to resume it.`);
+  await rename(part, dest);
   onProgress(received, total || received);
   return received;
 }
@@ -300,6 +324,20 @@ async function fetchCompanions(
   return { companions, created, bytes };
 }
 
+/**
+ * Whether a multi-file ROM laid out flat in `dir` would overwrite a different file
+ * another downloaded game uses (same name, other size), e.g. two games' disc1.bin.
+ */
+function clashesInFolder(dir: string, rom: RomDetail, files: NonNullable<RomDetail["files"]>): boolean {
+  const used = new Set(
+    listInstalled().flatMap((g) => [...g.files, ...(g.companions ?? [])].map((f) => join(g.dir, f).toLowerCase())),
+  );
+  return files.some((file) => {
+    const dest = join(dir, relativeName(rom, file));
+    return used.has(dest.toLowerCase()) && !alreadyThere(dest, file.file_size_bytes);
+  });
+}
+
 export async function install(romId: number, emit: Emit, options: { extractZip?: boolean } = {}): Promise<InstalledGame> {
   const existing = getInstalled(romId);
   if (existing) return existing;
@@ -311,9 +349,10 @@ export async function install(romId: number, emit: Emit, options: { extractZip?:
     const slug = rom.platform_slug || rom.platform_fs_slug || "unknown";
     const files = (rom.files ?? []).filter((f) => typeof f.id === "number" && f.file_name);
     // Layout: <platform folder>\rom.ext for a single file, <platform folder>\<rom folder>\... for
-    // multi-file ROMs, mirroring the RomM library.
+    // multi-file ROMs, mirroring the RomM library, unless the settings ask for them flat.
     const platformDir = platformFolder([rom.platform_slug, rom.platform_fs_slug ?? ""]);
-    const dir = files.length > 1 ? join(platformDir, safeRelative(rom.fs_name)) : platformDir;
+    const ownFolder = files.length > 1 && (loadConfig().multiFileLayout !== "flat" || clashesInFolder(platformDir, rom, files));
+    const dir = ownFolder ? join(platformDir, safeRelative(rom.fs_name)) : platformDir;
     await mkdir(dir, { recursive: true });
 
     const totalBytes = files.reduce((sum, f) => sum + (f.file_size_bytes ?? 0), 0) || rom.fs_size_bytes || 0;
@@ -382,6 +421,7 @@ export async function install(romId: number, emit: Emit, options: { extractZip?:
       sizeBytes: (done || totalBytes) + extra.bytes,
       coverPath: rom.path_cover_small || rom.path_cover_large || null,
       coverUrl: rom.url_cover || null,
+      meta: metaOf(rom),
       installedAt: Date.now(),
       lastPlayed: null,
     };
@@ -425,8 +465,10 @@ export async function uninstall(romId: number): Promise<void> {
         if (!owner.created.includes(ownRel)) putInstalled({ ...owner, created: [...owner.created, ownRel] });
       }
     }
-    // A multi-file ROM's own folder goes too, once empty.
-    if ((await readdir(game.dir).catch(() => ["?"])).length === 0) await rm(game.dir, { recursive: true, force: true });
+    // A multi-file ROM's own folder goes too, once empty (a flat one shares the platform folder).
+    const platformDir = platformFolder([game.platformSlug]);
+    const ownFolder = resolve(game.dir).toLowerCase() !== resolve(platformDir).toLowerCase();
+    if (ownFolder && (await readdir(game.dir).catch(() => ["?"])).length === 0) await rm(game.dir, { recursive: true, force: true });
   } else {
     // Installed by an earlier version, in a folder of its own (…\<slug>\<romId>).
     await rm(game.dir, { recursive: true, force: true });
@@ -437,8 +479,13 @@ export async function uninstall(romId: number): Promise<void> {
 
 export async function launch(romId: number, emit: Emit, hooks: { onStart: () => void; onExit: () => void }): Promise<void> {
   if (running.has(romId)) throw new LaunchError("This game is already running.");
-  const rom = await apiGet<RomDetail>(`/api/roms/${romId}`).catch(() => null);
   const local = getInstalled(romId);
+  // Offline, a downloaded game starts from its local record without asking RomM.
+  const rom = isOffline() ? null : await apiGet<RomDetail>(`/api/roms/${romId}`).catch((error) => {
+    noteFailure(error);
+    return null;
+  });
+  if (!local && isOffline()) throw new LaunchError("RomM cannot be reached, so only downloaded games can be played.", "offline");
   const slugs = [rom?.platform_slug, rom?.platform_fs_slug, local?.platformSlug].filter((s): s is string => !!s);
   const resolved = resolveEmulator(slugs);
   if (!resolved) throw new LaunchError(`No emulator is set for platform "${slugs[0] ?? "unknown"}".`, "no-emulator");
@@ -446,7 +493,8 @@ export async function launch(romId: number, emit: Emit, hooks: { onStart: () => 
   if (!existsSync(emulator.path)) throw new LaunchError(`Emulator not found: ${emulator.path}`);
 
   let game = local ?? (await install(romId, emit, { extractZip: emulator.extractZip }));
-  if (!game.companionsChecked && isArcade(slugs)) {
+  // Offline, the CHD check waits for the next launch with RomM reachable.
+  if (!game.companionsChecked && isArcade(slugs) && !isOffline()) {
     const controller = new AbortController();
     jobs.set(romId, controller);
     try {
@@ -484,7 +532,11 @@ export async function launch(romId: number, emit: Emit, hooks: { onStart: () => 
   try {
     const setup = await prepareSaves(emulator, mapping, game);
     extraArgs = setup.extraArgs;
-    if (loadConfig().syncSaves && setup.ctx) {
+    if (loadConfig().syncSaves && setup.ctx && isOffline()) {
+      // Local saves are used as they are; they upload once RomM is back.
+      saveCtx = setup.ctx;
+      emit({ romId, type: "notice", message: "Offline: saves will sync with RomM when it is reachable again.", level: "" });
+    } else if (loadConfig().syncSaves && setup.ctx) {
       saveCtx = setup.ctx;
       emit({ romId, type: "progress", label: "Syncing saves…", received: 0, total: 0 });
       const report = await pullSaves(saveCtx, gameSaveDir(game.platformSlug, romId));
@@ -519,7 +571,9 @@ export async function launch(romId: number, emit: Emit, hooks: { onStart: () => 
   });
   child.once("exit", (code) => {
     running.delete(romId);
-    emit({ romId, type: "exited", code, seconds: Math.round((Date.now() - started) / 1000) });
+    const ended = Date.now();
+    emit({ romId, type: "exited", code, seconds: Math.round((ended - started) / 1000) });
+    recordSession(romId, started, ended);
     hooks.onExit();
     if (saveCtx) void syncAfterExit(saveCtx, romId, emit);
   });
@@ -532,7 +586,18 @@ async function syncAfterExit(ctx: SyncContext, romId: number, emit: Emit): Promi
   try {
     // Some emulators flush the save a moment after their window closes.
     await new Promise((r) => setTimeout(r, 1500));
+    const markPending = () => {
+      const game = getInstalled(romId);
+      if (game && !game.savesPending) putInstalled({ ...game, savesPending: true });
+    };
+    if (isOffline() || !(await checkServer())) {
+      markPending();
+      emit({ romId, type: "notice", message: "Offline: saves stay on this PC and upload when RomM is reachable again.", level: "" });
+      return;
+    }
     const report = await pushSaves(ctx);
+    // Upload errors are caught inside pushSaves; a server gone away mid-upload is retried later.
+    if (report.errors.length && !(await checkServer())) markPending();
     const note = describe(report, "push");
     if (note) emit({ romId, type: "notice", message: note, level: report.errors.length ? "error" : "ok" });
   } finally {
