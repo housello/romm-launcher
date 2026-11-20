@@ -16,16 +16,17 @@
   </nav>
   <div id="app">
   <aside id="sidebar">
-    <div class="brand">RomM <span>Launcher</span></div>
+    <div class="brand"><img src="icon.png" alt="">RomM <span>Launcher</span></div>
     <div class="search"><input id="search" type="search" placeholder="Search all games…" title="Ctrl+Shift+F"></div>
-    <!-- Only this part scrolls: logo and search stay on top, Settings at the bottom. -->
+    <!-- Pinned: only the platform list below scrolls. -->
+    <nav class="side-pinned">
+      <a data-view="home" class="nav-item"><span class="ico">⌂</span>Home</a>
+      <a data-view="all" class="nav-item"><span class="ico">▦</span>All games</a>
+      <a data-view="installed" class="nav-item"><span class="ico">✓</span>Downloaded</a>
+      <a data-view="collections" class="nav-item"><span class="ico">❏</span>Collections</a>
+    </nav>
+    <div class="section-title">Platforms</div>
     <div class="side-scroll">
-      <nav>
-        <a data-view="all" class="nav-item">All games</a>
-        <a data-view="installed" class="nav-item">Downloaded</a>
-        <a data-view="collections" class="nav-item">Collections</a>
-      </nav>
-      <div class="section-title">Platforms</div>
       <nav id="platforms"><div class="muted pad">Loading…</div></nav>
     </div>
   </aside>
@@ -58,6 +59,7 @@
     </header>
     <div id="filter-panel" hidden></div>
     <section id="content">
+      <div id="home" hidden></div>
       <div id="grid"></div>
       <div id="list-foot"></div>
       <div id="empty" class="empty" hidden></div>

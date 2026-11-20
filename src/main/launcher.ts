@@ -129,6 +129,19 @@ export function resolveEmulator(slugs: string[]): { emulator: EmulatorDef; mappi
   return null;
 }
 
+/** Start an emulator with no game, so its own settings can be checked; the launcher does not track it. */
+export function openEmulator(id: string): Promise<void> {
+  const def = loadConfig().emulators.find((e) => e.id === id);
+  if (!def) throw new LaunchError("This emulator is no longer in Settings → Emulators.");
+  const path = resolvePath(def.path);
+  if (!existsSync(path)) throw new LaunchError(`Emulator not found: ${path}`);
+  return new Promise((done, fail) => {
+    const child = spawn(path, [], { cwd: dirname(path), detached: true, stdio: "ignore", windowsHide: false });
+    child.once("error", (error) => fail(new LaunchError(`Could not start ${def.name}: ${error.message}`)));
+    child.once("spawn", () => { child.unref(); done(); });
+  });
+}
+
 // ---------------------------------------------------------------- download
 
 const PRIORITY = [".m3u", ".cue", ".gdi", ".ccd", ".mds", ".cdi", ".chd", ".rvz", ".wbfs", ".iso", ".gcm", ".cso", ".pbp",

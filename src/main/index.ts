@@ -13,8 +13,9 @@ import { checkForUpdate, cleanUpUpdate, installUpdate, type UpdateInfo } from ".
 import { checkEmulatorUpdates, installCores, installDir, installEmulator } from "./emulatorManager";
 import { lastVersions, rememberVersion } from "./lastVersions";
 import { applyRenames, buildPlan, undoInfo, undoLast } from "./mame";
+import { guessList, listXmlFromExe, mameExes, softwareLists } from "./mameSources";
 import { syncFoldersOf, localPathOf, storedFolderPath, webdavClient } from "./folderSync";
-import { cancel, resolveConflicts, syncAllFolders, webdavSyncOn, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
+import { cancel, openEmulator, resolveConflicts, syncAllFolders, webdavSyncOn, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
 
 // Test data folder: ROMM_LAUNCHER_DATA keeps settings elsewhere. The packaged launcher keeps
 // everything next to its exe unless an "appdata" file is there (see paths.ts); that wins.
@@ -43,6 +44,7 @@ function createWindow(): void {
     minHeight: 600,
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#111318" : "#f4f5f8",
     title: "RomM Launcher",
+    icon: join(__dirname, "..", "..", "renderer", "icon.png"),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, "..", "preload", "preload.js"),
@@ -129,6 +131,84 @@ function romQuery(params: Record<string, unknown>): string {
   q.append("order_by", typeof params.orderBy === "string" ? params.orderBy : "name");
   q.append("order_dir", params.orderDir === "desc" ? "desc" : "asc");
   return q.toString();
+}
+
+/** A RomM rom as a library card. */
+function romItem(r: any) {
+  const released = r.metadatum?.first_release_date ?? r.first_release_date;
+  return {
+    id: r.id,
+    name: r.name || r.fs_name_no_ext || r.fs_name,
+    platformSlug: r.platform_slug,
+    platformName: r.platform_display_name || r.platform_name || r.platform_slug,
+    cover: r.path_cover_small || r.path_cover_large || null,
+    coverUrl: r.url_cover || null,
+    year: released ? new Date(Number(released)).getFullYear() : null,
+    installed: !!getInstalled(r.id),
+    versions: loadConfig().groupVersions ? versionsOf(r) : [],
+  };
+}
+
+const HOME_ROW = 15;
+const FACETS: Record<string, string> = {
+  collection: "Same collection", franchise: "Same franchise", genre: "Same genre", perspective: "Same perspective",
+  theme: "Same theme", keyword: "Similar themes", developer: "Same developer", publisher: "Same publisher",
+  company: "Same company", game_mode: "Same game modes", platform: "Same platform", decade: "Same decade",
+  igdb: "Similar on IGDB", top_rated: "Top rated",
+};
+
+/** Why RomM recommends a game, in a few words, as its web home page captions it. */
+function reasonOf(rec: any): string {
+  if (rec.seed_rom_name) return `Because you played ${rec.seed_rom_name}`;
+  const reason = Array.isArray(rec.reasons) ? rec.reasons[0] : null;
+  if (!reason) return "";
+  return reason.value ? String(reason.value) : (FACETS[reason.facet] ?? "");
+}
+
+/**
+ * The rows of RomM's web home page, from the same API calls (RomM 5.5). A row the
+ * server cannot answer (an older RomM has no recommendations) is left out.
+ */
+async function homeSections() {
+  const roms = async (params: Record<string, string | string[]>) => {
+    const q = new URLSearchParams({ with_char_index: "false", with_filter_values: "false", with_rom_id_index: "false" });
+    for (const [k, v] of Object.entries(params)) for (const x of [v].flat()) q.append(k, x);
+    const body = await apiGet<any>(`/api/roms?${q}`);
+    return { items: ((Array.isArray(body) ? body : body.items) ?? []).map(romItem), total: Array.isArray(body) ? body.length : (body.total ?? 0) };
+  };
+  const now = new Date();
+  const days = [`${now.getMonth() + 1}-${now.getDate()}`];
+  const leap = new Date(now.getFullYear(), 1, 29).getMonth() === 1;
+  if (days[0] === "2-28" && !leap) days.push("2-29");
+  const year = now.getFullYear();
+
+  const favourite = async () => {
+    const [list, me] = await Promise.all([apiGet<any[]>("/api/collections"), apiGet<{ id?: number }>("/api/users/me").catch(() => ({}) as { id?: number })]);
+    const fav = list.find((c) => c.is_favorite && (me.id === undefined || c.user_id === undefined || c.user_id === me.id));
+    if (!fav) return { items: [] };
+    return roms({ collection_id: String(fav.id), order_by: "name", order_dir: "asc", limit: "30" });
+  };
+  const jobs: Record<string, Promise<any>> = {
+    continue: roms({ order_by: "last_played", order_dir: "desc", last_played: "true", limit: String(HOME_ROW), with_total: "false" }),
+    recommended: apiGet<any[]>(`/api/recommendations?limit=${HOME_ROW}`).then((list) => ({
+      items: (Array.isArray(list) ? list : []).filter((x) => x?.rom?.id).map((x) => ({ ...romItem(x.rom), reason: reasonOf(x) })),
+    })),
+    // 1 January is where undated releases pile up, so RomM's web page skips it too.
+    anniversaries: days[0] === "1-1"
+      ? Promise.resolve({ items: [] })
+      : roms({ released_days: days, released_before_year: String(year), order_by: "first_release_date", order_dir: "asc", limit: "24", with_total: "true" })
+        .then((page) => ({ ...page, items: page.items.map((r: any) => ({ ...r, reason: r.year && year - r.year >= 1 ? `${year - r.year} years ago` : "" })) })),
+    recent: roms({ order_by: "id", order_dir: "desc", limit: String(HOME_ROW), with_total: "false" }),
+    favourites: favourite(),
+    random: apiGet<any>("/api/roms/random").then((r) => ({ items: r?.id ? [romItem(r)] : [] })),
+  };
+  const keys = Object.keys(jobs);
+  const results = await Promise.allSettled(Object.values(jobs));
+  const out: Record<string, { items: any[]; total?: number } | null> = {};
+  results.forEach((res, i) => { out[keys[i]] = res.status === "fulfilled" ? res.value : null; });
+  // Every row failing means RomM itself is unreachable: say so instead of an empty page.
+  if (results.every((r) => r.status === "rejected")) throw (results[0] as PromiseRejectedResult).reason;
+  return out;
 }
 
 /** This ROM plus its RomM siblings (other versions of the same game), or [] when there are none. */
@@ -314,18 +394,14 @@ function registerIpc(): void {
     const total: number = Array.isArray(body) ? items.length : (body.total ?? items.length);
     return {
       total,
-      items: items.map((r) => ({
-        id: r.id,
-        name: r.name || r.fs_name_no_ext || r.fs_name,
-        platformSlug: r.platform_slug,
-        platformName: r.platform_display_name || r.platform_name || r.platform_slug,
-        cover: r.path_cover_small || r.path_cover_large || null,
-        coverUrl: r.url_cover || null,
-        year: r.first_release_date ? new Date(Number(r.first_release_date)).getFullYear() : null,
-        installed: !!getInstalled(r.id),
-        versions: loadConfig().groupVersions ? versionsOf(r) : [],
-      })),
+      items: items.map(romItem),
     };
+  });
+
+  handle("home:sections", () => homeSections());
+  handle("home:random", async () => {
+    const r = await apiGet<any>("/api/roms/random");
+    return r?.id ? romItem(r) : null;
   });
 
   handle("rom:get", async (id: number) => {
@@ -360,6 +436,7 @@ function registerIpc(): void {
       companies: r.metadatum?.companies ?? r.companies ?? [],
       year: r.metadatum?.first_release_date || r.first_release_date ? new Date(Number(r.metadatum?.first_release_date ?? r.first_release_date)).getFullYear() : null,
       emulator: resolved ? resolved.emulator.name + (resolved.mapping.core ? ` (${resolved.mapping.core})` : "") : null,
+      emulatorId: resolved?.emulator.id ?? null,
       installed: getInstalled(id),
       versions: versionsOf(r),
       running: runningGames().includes(id),
@@ -449,6 +526,7 @@ function registerIpc(): void {
   handle("emulators:openFolder", (key: string) => shell.openPath(installDir(String(key))));
   handle("emulators:detectRetroArch", () => { const p = detectRetroArch(); return p ? toStored(p) : null; });
   handle("emulators:cores", (path: string) => listCores(resolvePath(path)));
+  handle("emulators:open", (id: string) => openEmulator(String(id)));
   handle("emulators:exists", (path: string) => !!path && existsSync(resolvePath(path)));
   handle("app:info", () => ({ version: app.getVersion(), project: "https://github.com/stemarinacciowork-dev/romm-launcher" }));
   handle("app:paths",() => ({ portable: isPortable(), baseDir: baseDir(), dataDir: dataDir(), canSwitch: canSwitchLocation(), ...dataLocations() }));
@@ -509,6 +587,12 @@ function registerIpc(): void {
     return applyRenames(loadConfig().serverUrl, clean, toolProgress);
   });
   handle("tools:mameUndoInfo", () => undoInfo());
+  handle("tools:mameExes", () => mameExes());
+  handle("tools:mameListXml", (id: string) => listXmlFromExe(String(id), toolProgress));
+  handle("tools:softwareLists", async (id: string, slugs: string[]) => {
+    const lists = await softwareLists(String(id));
+    return { lists, guess: guessList(Array.isArray(slugs) ? slugs.map(String) : [], lists) };
+  });
   handle("tools:mameUndo", () => undoLast(loadConfig().serverUrl, toolProgress));
   handle("open:external", (url: string) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
@@ -546,6 +630,7 @@ function offlineDetail(id: number) {
     companies: meta?.companies ?? [],
     year: meta?.year ?? null,
     emulator: resolved ? resolved.emulator.name + (resolved.mapping.core ? ` (${resolved.mapping.core})` : "") : null,
+    emulatorId: resolved?.emulator.id ?? null,
     installed: game,
     versions: [],
     running: runningGames().includes(id),

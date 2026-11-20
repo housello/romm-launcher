@@ -113,6 +113,16 @@ with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers
 
 ## Playing
 
+- **Home** (the start page) shows the rows of RomM's web home page: Continue playing,
+  Recommended for you (with why), On this day (games released on today's date in earlier
+  years), a Random pick (**↻ Another** for a new one), Recently added and Favourites, plus the
+  games downloaded on this PC. Rows the server does not offer (older RomM versions have no
+  recommendations) are left out; offline, Home shows the downloaded games. Clicking a card opens
+  the launcher's own detail panel, not the RomM web page.
+- **Sidebar**: Home, All games, Downloaded and Collections stay in place; only the platform
+  list scrolls.
+- **⚙ Open emulator** in a game's detail panel starts its emulator with no game, to check or
+  change the emulator's own settings.
 - **Play** downloads the game if needed (with progress), then starts the emulator.
   The launcher minimizes while you play and comes back when the emulator exits.
 - **Multi-file games** are downloaded file by file, keeping their folder layout.
@@ -274,15 +284,24 @@ the emulator, offline, or the game is running).
 
 Uses the `/api/saves` and `/api/states` endpoints (no device registration).
 
-## Renaming arcade games from a MAME XML
+## Renaming games from MAME names
 
 Settings → Tools → **Rename games from a MAME XML** sets RomM's game names from a MAME
 XML or DAT (`mame -listxml`, or the DAT that came with your ROM set), e.g. `sf2` →
 *Street Fighter II: The World Warrior (World 910522)*.
 
-1. Choose the platform and the file, then **Preview changes**. Each game's file name
-   (`sf2.zip` → `sf2`) is looked up in the file; the XML is streamed, so a full
-   several-hundred-MB `mame.xml` is fine.
+1. Choose the platform and where the names come from (**Names from**), then **Preview changes**:
+   - **A MAME XML / DAT file**: pick it with Browse.
+   - **MAME itself**: the MAME in Settings → Emulators (downloaded by the launcher or added by
+     hand) is run once with `-listxml`; the result is kept in the data folder (`mame-cache`) and
+     reused until that mame.exe changes.
+   - **A MAME software list**: one of the lists in MAME's `hash` folder, for console and computer
+     games named the MAME way (e.g. `sonic.zip`). The list matching the platform is preselected
+     (e.g. `megadriv` for Mega Drive/Genesis); its "supported" flag gives the Working/Imperfect/
+     Not Working tags.
+
+   The choice is remembered per platform. Each game's file name (`sf2.zip` → `sf2`) is looked up
+   in the XML; it is streamed, so a full several-hundred-MB `mame.xml` is fine.
 2. Review the table: untick rows, edit a new name by hand, or **Unselect clones** to rename
    only parent sets. By default each game gets the full MAME description, brackets included,
    e.g. *Dynamite Cop (Export, Model 2B)*. The optional "Shorten names" removes trailing

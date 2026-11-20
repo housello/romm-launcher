@@ -43,6 +43,8 @@ const decode = (s: string) =>
     return ENTITIES[e.toLowerCase()] ?? m;
   });
 
+const SUPPORTED: Record<string, string> = { yes: "good", partial: "imperfect", no: "preliminary" };
+
 const attr = (tag: string, name: string) => {
   const m = tag.match(new RegExp(`\\s${name}\\s*=\\s*"([^"]*)"`));
   return m ? decode(m[1]!) : "";
@@ -63,7 +65,8 @@ export async function readMameXml(path: string, wanted: Set<string>, onProgress?
   let buffer = "";
   let read = 0;
   const { size } = await stat(path);
-  const start = /<(machine|game)\s[^>]*>/g;
+  // <software> entries come from MAME's software lists (hash/*.xml), keyed by short name the same way.
+  const start = /<(machine|game|software)\s[^>]*>/g;
 
   const drain = (final: boolean) => {
     let consumed = 0; // end of the last complete entry
@@ -89,22 +92,24 @@ export async function readMameXml(path: string, wanted: Set<string>, onProgress?
       if (name && wanted.has(name)) {
         const body = buffer.slice(start.lastIndex, close);
         const status = body.match(/<driver\s[^>]*\bstatus\s*=\s*"([^"]*)"/);
+        // A software list says how well an entry runs with supported="yes|partial|no" (absent = yes).
+        const supported = tagName === "software" ? SUPPORTED[attr(open, "supported") || "yes"] ?? "" : "";
         entries.set(name, {
           description: child(body, "description"),
           year: child(body, "year"),
-          manufacturer: child(body, "manufacturer"),
+          manufacturer: child(body, "manufacturer") || child(body, "publisher"),
           cloneof: attr(open, "cloneof"),
           isbios: attr(open, "isbios") === "yes",
           isdevice: attr(open, "isdevice") === "yes",
           ismechanical: attr(open, "ismechanical") === "yes",
           runnable: attr(open, "runnable") !== "no",
-          driverStatus: status ? status[1]!.toLowerCase() : "",
+          driverStatus: status ? status[1]!.toLowerCase() : supported,
         });
       }
       // Whole-file features, from every entry (not only the matched ones).
       if (/\sisdevice\s*=/.test(open)) features.device = true;
       if (/\sismechanical\s*=/.test(open)) features.mechanical = true;
-      if (!features.driverStatus && buffer.slice(start.lastIndex, close).includes("<driver ")) features.driverStatus = true;
+      if (!features.driverStatus && (tagName === "software" || buffer.slice(start.lastIndex, close).includes("<driver "))) features.driverStatus = true;
       consumed = close + tagName.length + 3;
       start.lastIndex = consumed;
     }
@@ -134,7 +139,7 @@ export async function readMameXml(path: string, wanted: Set<string>, onProgress?
     });
     stream.on("error", reject);
   });
-  if (machines === 0) throw new Error("No <machine> or <game> entries found: is this a MAME XML / DAT file?");
+  if (machines === 0) throw new Error("No <machine>, <game> or <software> entries found: is this a MAME XML / DAT or a software list?");
   return { entries, machines, features };
 }
 

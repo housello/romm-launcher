@@ -76,6 +76,7 @@ button:disabled { opacity: .5; cursor: default; }
 .side-scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
 .side-scroll::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 .brand { font-size: 20px; font-weight: 700; padding: 18px 16px 10px; }
+.brand img { width: 26px; height: 26px; vertical-align: -6px; margin-right: 8px; }
 .brand span { color: var(--accent-2); font-weight: 400; }
 .search { padding: 4px 12px 10px; }
 .search input { width: 100%; }
@@ -89,6 +90,10 @@ button:disabled { opacity: .5; cursor: default; }
 .nav-item:hover { background: var(--panel-2); }
 .nav-item.active { background: var(--panel-2); border-left-color: var(--accent); }
 .nav-item .warn { color: var(--warn); font-size: 11px; }
+/* Home, All games, Downloaded and Collections stay put above the scrolling platforms. */
+.side-pinned { flex-shrink: 0; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.side-pinned .ico { width: 16px; text-align: center; color: var(--muted); }
+.side-pinned .nav-item.active .ico { color: var(--accent-2); }
 .sidebar-foot { flex-shrink: 0; border-top: 1px solid var(--line); padding: 6px 0; background: var(--panel); }
 
 /* main */
@@ -287,3 +292,14 @@ table.platforms td .row button { padding: 7px 9px; }
 #closing-sync { position: fixed; inset: 0; background: #0009; display: flex; align-items: center; justify-content: center; z-index: 100; }
 #closing-sync .box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px 24px; max-width: 460px; }
 #closing-sync .foot { display: flex; justify-content: flex-end; margin-top: 14px; }
+
+/* home */
+#home { display: flex; flex-direction: column; gap: 22px; }
+.home-row h2 { font-size: 16px; margin: 0 0 10px; display: flex; align-items: center; gap: 10px; }
+.home-row h2 .muted { font-size: 13px; font-weight: 400; }
+.home-row h2 .link { margin-left: auto; font-size: 13px; font-weight: 400; color: var(--accent-2); cursor: pointer; }
+.home-row h2 button.small { font-size: 12px; padding: 2px 10px; font-weight: 400; }
+.row-scroll { display: grid; grid-auto-flow: column; grid-auto-columns: var(--card); gap: 16px; overflow-x: auto; padding-bottom: 8px; }
+.row-scroll::-webkit-scrollbar { height: 8px; }
+.row-scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+.card .sub.reason { color: var(--accent-2); }

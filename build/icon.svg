@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- RomM Launcher: a play button holding a pad's four face buttons, in RomM's palette. -->
+  <defs>
+    <clipPath id="tile"><rect x="16" y="16" width="480" height="480" rx="112"/></clipPath>
+    <clipPath id="upper"><polygon points="0,0 512,0 0,512"/></clipPath>
+    <clipPath id="lower"><polygon points="512,0 512,512 0,512"/></clipPath>
+    <path id="play" d="M178 132 L178 380 L392 256 Z" stroke-linejoin="round" stroke-width="56"/>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="512" height="512" fill="#ede5f8"/>
+    <polygon points="512,40 512,512 40,512" fill="#bea4e1"/>
+  </g>
+  <g clip-path="url(#upper)"><use href="#play" fill="#553e98" stroke="#553e98"/></g>
+  <g clip-path="url(#lower)"><use href="#play" fill="#371f69" stroke="#371f69"/></g>
+  <g>
+    <circle cx="248" cy="210" r="25" fill="#e6c7a7"/>
+    <circle cx="202" cy="256" r="25" fill="#e6c7a7"/>
+    <circle cx="294" cy="256" r="25" fill="#e1a38d"/>
+    <circle cx="248" cy="302" r="25" fill="#e1a38d"/>
+  </g>
+</svg>

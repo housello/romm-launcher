@@ -94,7 +94,7 @@ function markActive() {
 $("#sidebar").addEventListener("click", (e) => {
   const a = e.target.closest(".nav-item");
   if (!a) return;
-  if (a.dataset.view) setView({ kind: a.dataset.view, title: a.textContent.trim() });
+  if (a.dataset.view) setView({ kind: a.dataset.view, title: [...a.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join("").trim() });
   if (a.dataset.platform) {
     const p = state.platforms.find((x) => x.id === Number(a.dataset.platform));
     setView({ kind: "platform", id: p.id, title: p.name, slug: p.slug });
@@ -214,8 +214,10 @@ function setOnline(online) {
   if (online) {
     toast("RomM is reachable again", "ok");
     loadSidebar();
-    if (state.view.kind === "installed") reload();
-  } else if (!["installed", "settings", "about"].includes(state.view.kind)) {
+    if (["installed", "home"].includes(state.view.kind)) reload();
+  } else if (state.view.kind === "home") {
+    reload();
+  } else if (!["installed", "home", "settings", "about"].includes(state.view.kind)) {
     setView({ kind: "installed", title: "Downloaded" });
   }
 }
@@ -373,7 +375,7 @@ function showUpdate(update) {
 }
 
 function setView(view, search = "") {
-  if (state.online === false && view.kind !== "installed") {
+  if (state.online === false && !["installed", "home"].includes(view.kind)) {
     toast("Offline: only downloaded games are available until RomM is reachable", "");
     view = { kind: "installed", title: "Downloaded" };
     search = "";
@@ -418,8 +420,18 @@ function reload() {
   $("#content").scrollTop = 0;
   renderListFoot();
   const isCollections = state.view.kind === "collections";
-  $("#filter-btn").hidden = isCollections;
-  $("#sort").hidden = isCollections;
+  const isHome = state.view.kind === "home";
+  $("#filter-btn").hidden = isCollections || isHome;
+  $("#sort").hidden = isCollections || isHome;
+  $("#view-search").hidden = isHome;
+  $(".viewmode").hidden = isHome;
+  $("#zoom").hidden = isHome || state.config?.viewMode === "list";
+  $("#home").hidden = !isHome;
+  $("#grid").hidden = isHome;
+  if (isHome) {
+    $("#filter-panel").hidden = true;
+    return renderHome();
+  }
   if (isCollections) {
     $("#filter-panel").hidden = true;
     return renderCollectionsPage();
@@ -429,7 +441,7 @@ function reload() {
 }
 
 async function loadMore() {
-  if (state.loading || state.done || state.view.kind === "installed" || state.view.kind === "collections") return;
+  if (state.loading || state.done || ["installed", "collections", "home"].includes(state.view.kind)) return;
   state.loading = true;
   state.error = null;
   const gen = state.gen;
@@ -517,7 +529,7 @@ async function loadMore() {
 
 /** Load the next page when the end of the list is near. One measure, checked on every scroll. */
 function maybeLoadMore() {
-  if (state.loading || state.done || state.error || state.view.kind === "installed" || state.view.kind === "collections" || $("#content").hidden) return;
+  if (state.loading || state.done || state.error || ["installed", "collections", "home"].includes(state.view.kind) || $("#content").hidden) return;
   const c = $("#content");
   if (c.scrollHeight - c.scrollTop - c.clientHeight < 1200) loadMore();
 }
@@ -537,7 +549,7 @@ window.addEventListener("resize", () => maybeLoadMore());
 function renderListFoot() {
   const foot = $("#list-foot");
   if (!foot) return;
-  if (state.view.kind === "installed" || state.view.kind === "collections" || state.offset === 0 && !state.loading) {
+  if (["installed", "collections", "home"].includes(state.view.kind) || state.offset === 0 && !state.loading) {
     foot.innerHTML = "";
     return;
   }
@@ -585,11 +597,23 @@ function cardHtml(r) {
     ${job && job.type === "progress" ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}
     <div class="title" title="${esc(r.name)}">${esc(r.name)}</div>
     <div class="sub">${esc(r.platformName || "")}${r.year ? " · " + r.year : ""}</div>
+    ${r.reason ? `<div class="sub reason" title="${esc(r.reason)}">${esc(r.reason)}</div>` : ""}
   </div>`;
 }
 
 $("#grid").addEventListener("click", (e) => {
   if (state.view.kind === "collections") return collectionsPageClick(e);
+  cardClick(e);
+});
+$("#home").addEventListener("click", (e) => {
+  if (e.target.closest("[data-home-random]")) return void rollRandom();
+  const go = e.target.closest("[data-home-go]");
+  if (go) return setView({ kind: go.dataset.homeGo, title: go.dataset.title });
+  cardClick(e);
+});
+
+/** Play or open the game under a click on a card. */
+function cardClick(e) {
   const play = e.target.closest("[data-play]");
   if (play) {
     e.stopPropagation();
@@ -606,7 +630,78 @@ $("#grid").addEventListener("click", (e) => {
     const item = state.items?.get(Number(card.dataset.id));
     openDetail((item?.versions?.length > 1 && lastVersionOf(item.versions)) || Number(card.dataset.id));
   }
-});
+}
+
+// ------------------------------------------------------------------ home
+
+const HOME_ROWS = [
+  ["continue", "Continue playing"],
+  ["recommended", "Recommended for you"],
+  ["anniversaries", "On this day"],
+  ["downloaded", "Downloaded on this PC"],
+  ["recent", "Recently added"],
+  ["favourites", "Favourites"],
+];
+
+/** RomM's web home page, with cards that open the launcher's own details. */
+async function renderHome() {
+  const gen = state.gen;
+  const home = $("#home");
+  home.innerHTML = '<p class="muted">Loading…</p>';
+  const installed = await api("installed:list").catch(() => []);
+  const downloaded = [...installed]
+    .sort((a, b) => (b.lastPlayed ?? b.installedAt ?? 0) - (a.lastPlayed ?? a.installedAt ?? 0))
+    .slice(0, 15)
+    .map((g) => ({ id: g.romId, name: g.name, platformName: g.platformName, cover: g.coverPath, coverUrl: g.coverUrl, installed: true }));
+  let rows = {};
+  let failure = "";
+  if (state.online !== false) {
+    try {
+      rows = await api("home:sections");
+    } catch (error) {
+      failure = error.message;
+    }
+  }
+  if (gen !== state.gen) return;
+  rows.downloaded = { items: downloaded };
+  for (const row of Object.values(rows)) for (const item of row?.items ?? []) state.items.set(item.id, item);
+  const section = ([key, title]) => {
+    const items = rows[key]?.items ?? [];
+    if (!items.length) return "";
+    const more = key === "downloaded" && installed.length > items.length
+      ? `<a class="link" data-home-go="installed" data-title="Downloaded">All ${installed.length} →</a>`
+      : "";
+    const count = rows[key].total > items.length ? rows[key].total : items.length;
+    return `<section class="home-row" data-row="${key}">
+      <h2>${esc(title)} <span class="muted">${count}</span>${more}</h2>
+      <div class="row-scroll">${items.map(cardHtml).join("")}</div>
+    </section>`;
+  };
+  const random = rows.random?.items?.[0];
+  const html = [
+    state.online === false ? '<p class="muted">Offline: RomM\'s rows come back when it is reachable.</p>' : "",
+    failure ? `<p class="muted">RomM's rows could not be loaded: ${esc(failure)}</p>` : "",
+    ...HOME_ROWS.slice(0, 3).map(section),
+    random ? `<section class="home-row home-random"><h2>Random pick <button class="small" data-home-random title="Another random game">↻ Another</button></h2>
+      <div class="row-scroll">${cardHtml(random)}</div></section>` : "",
+    ...HOME_ROWS.slice(3).map(section),
+  ].join("");
+  home.innerHTML = html || '<p class="muted">Nothing to show yet: download or play a game and it appears here.</p>';
+  $("#view-count").textContent = "";
+}
+
+async function rollRandom() {
+  const row = $("#home .home-random .row-scroll");
+  if (!row) return;
+  try {
+    const r = await api("home:random");
+    if (!r) return;
+    state.items.set(r.id, r);
+    row.innerHTML = cardHtml(r);
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
 
 let searchTimer = 0;
 // Sidebar box: searches the whole library.
@@ -1112,24 +1207,24 @@ window.romm.onLaunchEvent((ev) => {
 });
 
 function markInstalled(id) {
-  const card = $(`.card[data-id="${id}"]`);
-  if (card && !$(".badge", card)) card.insertAdjacentHTML("afterbegin", '<span class="badge" title="Downloaded">✓</span>');
+  for (const card of $(`.card[data-id="${id}"]`)) {
+    if (!$(".badge", card)) card.insertAdjacentHTML("afterbegin", '<span class="badge" title="Downloaded">✓</span>');
+  }
 }
 
-/** The card showing game `id`, which may be one of the versions folded into it. */
-function cardOf(id) {
+/** The cards showing game `id`, which may be one of the versions folded into them. */
+function cardsOf(id) {
   const own = $(`.card[data-id="${id}"]`);
-  if (own) return own;
+  if (own.length) return own;
   for (const [cardId, item] of state.items ?? []) {
     if (item.versions?.some((v) => v.id === id)) return $(`.card[data-id="${cardId}"]`);
   }
-  return null;
+  return [];
 }
 
 function refreshJob(id) {
-  const card = cardOf(id);
   const job = state.jobs.get(id);
-  if (card) {
+  for (const card of cardsOf(id)) {
     $(".bar", card)?.remove();
     if (job && job.type === "progress") {
       const pct = job.total ? Math.round((job.received / job.total) * 100) : 0;
@@ -1261,6 +1356,7 @@ function renderDetailActions() {
     ${!r.installed && !busy && !running ? '<button data-act="install">⭳ Download only</button>' : ""}
     ${r.offline ? "" : (r.collections ?? []).some((c) => c.isFavorite) ? '<button data-act="unfav" title="Remove from your RomM favourites">★ Favourite</button>' : '<button data-act="fav" title="Add to your RomM favourites">☆ Favourite</button>'}
     ${r.installed ? `<button data-act="sync" ${syncBlocker(r) ? `disabled title="${esc(syncBlocker(r))}"` : 'title="Download newer saves from RomM, then upload the ones changed here"'}>⟳ Sync saves</button>` : ""}
+    ${r.emulatorId ? `<button data-act="emu" title="Start ${esc(r.emulator)} without a game, to check its settings">⚙ Open emulator</button>` : ""}
     ${r.installed && !busy && !running ? '<button data-act="folder">Open folder</button><button class="danger" data-act="uninstall">Delete local copy</button>' : ""}
     ${r.offline ? "" : '<button data-act="web">Open in RomM</button>'}`;
   if (busy) {
@@ -1305,6 +1401,7 @@ $("#detail").addEventListener("click", async (e) => {
     }
     if (act === "cancel" || act === "stop") await api("game:cancel", r.id);
     if (act === "folder") await api("game:openFolder", r.id);
+    if (act === "emu") await api("emulators:open", r.emulatorId);
     if (act === "fav" || act === "unfav") {
       const on = await api("collections:setFavorite", r.id, act === "fav");
       toast(on ? "Added to favourites" : "Removed from favourites", "ok");
@@ -1934,7 +2031,7 @@ async function renderStorage() {
 // ------------------------------------------------------------------ tools: MAME names
 
 // Full MAME descriptions by default, e.g. "Dynamite Cop (Export, Model 2B)".
-const mame = { path: "", clean: false, tags: { kind: true, mechanical: true, status: true }, plan: null, platformId: null, busy: false };
+const mame = { clean: false, tags: { kind: true, mechanical: true, status: true }, plan: null, platformId: null, busy: false };
 
 window.romm.onToolProgress((ev) => {
   const el = $("#t-progress");
@@ -1950,14 +2047,20 @@ async function renderTools() {
   const undo = await api("tools:mameUndoInfo").catch(() => null);
   $("#tab-body").innerHTML = `
     <h2 style="margin-top:0">Rename games from a MAME XML</h2>
-    <div class="hint" style="margin-bottom:14px;max-width:820px">Matches each game's file name (e.g. <code>sf2.zip</code>) to a MAME XML or DAT
-      (<code>mame -listxml</code>, or a DAT from your ROM set) and sets the RomM name from its description, e.g.
+    <div class="hint" style="margin-bottom:14px;max-width:820px">Matches each game's file name (e.g. <code>sf2.zip</code>) to a MAME XML or DAT,
+      to MAME's own machine list, or to one of MAME's software lists, and sets the RomM name from its description, e.g.
       <i>sf2</i> → <i>Street Fighter II: The World Warrior (World 910522)</i>. You see every change before anything is written.
       Names change on the server, for every user. A later RomM metadata update may set them again.</div>
     <div class="form">
       <label>Platform</label>
       <select id="t-platform">${state.platforms.map((p) => `<option value="${p.id}" ${p.id === mame.platformId ? "selected" : ""}>${esc(p.name)} (${p.romCount})</option>`).join("")}</select>
-      <label>MAME XML / DAT</label><div class="row"><input id="t-file" value="${esc(mame.path)}" placeholder="Choose a file…" readonly><button id="t-browse">Browse…</button></div>
+      <label>Names from</label>
+      <select id="t-kind">
+        <option value="file">A MAME XML / DAT file</option>
+        <option value="exe">MAME itself (mame -listxml)</option>
+        <option value="softlist">A MAME software list (hash folder)</option>
+      </select>
+      <label></label><div id="t-source"></div>
       <label></label><label><input type="checkbox" id="t-clean" ${mame.clean ? "checked" : ""}> Shorten names: remove details in brackets at the end, e.g. "(World 910522)"</label>
       <label></label><div class="hint" style="margin-top:-6px">Kept where they tell sets apart: if several games would end up with the same name,
         the parent set gets the short name and its clones keep the full one. Off by default: games get the full MAME name.</div>
@@ -1976,13 +2079,21 @@ async function renderTools() {
     ${undo ? `<div class="emu" style="margin-top:22px;max-width:760px"><b>Last rename:</b> ${undo.count} games on ${esc(new Date(undo.at).toLocaleString())}
       <button id="t-undo" style="margin-left:10px">Undo</button><div class="hint">Puts back the names those games had before.</div></div>` : ""}`;
 
-  $("#t-platform").addEventListener("change", (e) => { mame.platformId = Number(e.target.value); mame.plan = null; $("#t-result").innerHTML = ""; });
+  mame.exes = await api("tools:mameExes").catch(() => []);
+  $("#t-platform").addEventListener("change", (e) => {
+    mame.platformId = Number(e.target.value);
+    mame.plan = null;
+    $("#t-result").innerHTML = "";
+    renderMameSource();
+  });
+  $("#t-kind").addEventListener("change", (e) => {
+    sourceOf(mame.platformId).kind = e.target.value;
+    saveMameSources();
+    renderMameSource();
+  });
   $("#t-clean").addEventListener("change", (e) => { mame.clean = e.target.checked; });
   $$("[data-tag]").forEach((cb) => cb.addEventListener("change", () => { mame.tags[cb.dataset.tag] = cb.checked; }));
-  $("#t-browse").addEventListener("click", async () => {
-    const path = await api("tools:pickMameXml");
-    if (path) { mame.path = path; $("#t-file").value = path; }
-  });
+  renderMameSource();
   $("#t-preview").addEventListener("click", previewRenames);
   $("#t-undo")?.addEventListener("click", async () => {
     if (!confirm(`Put back the previous names of ${undo.count} games on the server?`)) return;
@@ -1998,13 +2109,92 @@ async function renderTools() {
   if (mame.plan) renderPlan();
 }
 
+// Where each platform's names come from, remembered on this PC: { kind, path, emuId, list }.
+mame.sources = (() => {
+  try { return JSON.parse(localStorage.getItem("mameSources") || "{}"); } catch { return {}; }
+})();
+function saveMameSources() {
+  try { localStorage.setItem("mameSources", JSON.stringify(mame.sources)); } catch { /* not kept */ }
+}
+const isArcadeSlug = (slug) => /^(mame|arcade|fbneo|neogeo|cps|naomi|model)/i.test(slug || "");
+
+/** The source chosen for a platform; arcade defaults to MAME itself, others to a software list. */
+function sourceOf(platformId) {
+  const p = state.platforms.find((x) => x.id === platformId);
+  if (!mame.sources[platformId]) {
+    const exe = mame.exes?.[0];
+    const kind = !exe ? "file" : isArcadeSlug(p?.slug) || !exe.hasHash ? "exe" : "softlist";
+    mame.sources[platformId] = { kind, path: "", emuId: exe?.id ?? "", list: "" };
+  }
+  return mame.sources[platformId];
+}
+
+/** The controls under "Names from" for the chosen kind of source. */
+async function renderMameSource() {
+  const box = $("#t-source");
+  if (!box) return;
+  const src = sourceOf(mame.platformId);
+  $("#t-kind").value = src.kind;
+  const exes = mame.exes ?? [];
+  if (src.kind !== "file" && !exes.some((e) => e.id === src.emuId)) src.emuId = exes[0]?.id ?? "";
+  const exePicker = exes.length > 1
+    ? `<select id="t-emu">${exes.map((e) => `<option value="${esc(e.id)}" ${e.id === src.emuId ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select>`
+    : "";
+  const noMame = '<div class="hint">No MAME in Settings → Emulators. Download MAME there (or add your mame.exe), or use a file.</div>';
+  if (src.kind === "file") {
+    box.innerHTML = `<div class="row"><input id="t-file" value="${esc(src.path)}" placeholder="Choose a file…" readonly><button id="t-browse">Browse…</button></div>`;
+    $("#t-browse").addEventListener("click", async () => {
+      const path = await api("tools:pickMameXml");
+      if (path) { src.path = path; $("#t-file").value = path; saveMameSources(); }
+    });
+    return;
+  }
+  if (!exes.length) { box.innerHTML = noMame; return; }
+  if (src.kind === "exe") {
+    const exe = exes.find((e) => e.id === src.emuId);
+    box.innerHTML = `${exePicker}<div class="hint">${esc(exe.path)}<br>Runs <code>mame -listxml</code> the first time (a minute or so) and reuses the
+      result until MAME is updated.</div>`;
+  } else {
+    box.innerHTML = `<div class="row">${exePicker}<select id="t-list" disabled><option>Loading software lists…</option></select></div>
+      <div class="hint">Matches each game's file name to the list's short names, e.g. <code>sonic.zip</code> → <i>Sonic The Hedgehog (USA, Europe)</i>.</div>`;
+    const p = state.platforms.find((x) => x.id === mame.platformId);
+    try {
+      const { lists, guess } = await api("tools:softwareLists", src.emuId, [p?.slug, p?.fsSlug]);
+      if ($("#t-source") !== box || sourceOf(mame.platformId) !== src || src.kind !== "softlist") return;
+      if (!lists.some((l) => l.name === src.list)) src.list = guess || "";
+      const sel = $("#t-list");
+      sel.innerHTML = `${src.list ? "" : '<option value="">Choose a software list…</option>'}${lists.map((l) => `<option value="${esc(l.name)}" ${l.name === src.list ? "selected" : ""}>${esc(l.description)} (${esc(l.name)})</option>`).join("")}`;
+      sel.disabled = false;
+      mame.lists = lists;
+      sel.addEventListener("change", () => { src.list = sel.value; saveMameSources(); });
+    } catch (error) {
+      box.innerHTML = `${exePicker}<div class="hint" style="color:var(--danger)">${esc(error.message)}</div>`;
+    }
+  }
+  $("#t-emu")?.addEventListener("change", (e) => { src.emuId = e.target.value; saveMameSources(); renderMameSource(); });
+}
+
+/** The XML file for the chosen source; asking MAME for -listxml when needed. */
+async function mameXmlPath() {
+  const src = sourceOf(mame.platformId);
+  if (src.kind === "file") {
+    if (!src.path) throw new Error("Choose a MAME XML or DAT file first.");
+    return src.path;
+  }
+  if (!src.emuId) throw new Error("Add MAME in Settings → Emulators first.");
+  if (src.kind === "exe") return api("tools:mameListXml", src.emuId);
+  const list = (mame.lists ?? []).find((l) => l.name === src.list);
+  if (!list) throw new Error("Choose a software list first.");
+  return list.path;
+}
+
 async function previewRenames() {
-  if (!mame.path) return toast("Choose a MAME XML or DAT file first.", "error");
   mame.busy = true;
   $("#t-preview").disabled = true;
   $("#t-result").innerHTML = "";
   try {
-    mame.plan = await api("tools:mamePlan", mame.platformId, mame.path, mame.clean, Object.keys(mame.tags).filter((k) => mame.tags[k]));
+    const xml = await mameXmlPath();
+    mame.plan = await api("tools:mamePlan", mame.platformId, xml, mame.clean, Object.keys(mame.tags).filter((k) => mame.tags[k]));
     mame.plan.rows.forEach((r) => (r.selected = true));
     renderPlan();
   } catch (error) {
@@ -2128,7 +2318,7 @@ function renderPlan() {
   state.online = true;
   void refreshUser();
   loadSidebar();
-  setView({ kind: "all", title: "All games" });
+  setView({ kind: "home", title: "Home" });
 })();
 
 // Broken cover → drop it and fall back to the title text (inline onerror is blocked by CSP).
