@@ -168,6 +168,10 @@ function registerIpc(): void {
     return next;
   });
 
+  handle("user:me", async () => {
+    const me = await apiGet<{ username?: string }>("/api/users/me", 8_000);
+    return { username: me.username ?? "" };
+  });
   handle("server:test", async () => {
     const me = await apiGet<{ username?: string; role?: string }>("/api/users/me");
     let version: string | null = null;

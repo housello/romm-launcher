@@ -110,10 +110,33 @@ $("#sidebar").addEventListener("click", (e) => {
 // ------------------------------------------------------------------ offline
 
 /** Switch between the live library and the downloaded games, as RomM comes and goes. */
+// ------------------------------------------------------------------ signed-in user
+
+const user = { name: null };
+
+/** The RomM account in the menu bar; offline, the one the settings sign in with. */
+function renderUser() {
+  const name = user.name || state.config?.username || "";
+  const el = $("#menu-user");
+  el.hidden = !name;
+  el.textContent = name ? `👤 ${name}${state.online === false ? " · offline" : ""}` : "";
+}
+
+async function refreshUser() {
+  try {
+    user.name = (await api("user:me")).username || null;
+  } catch {
+    // Offline or refused: keep showing the last known name.
+  }
+  renderUser();
+}
+
 function setOnline(online) {
   if (state.online === online) return;
   state.online = online;
   $("#offline-banner").hidden = online;
+  if (online) void refreshUser();
+  else renderUser();
   if (online) {
     toast("RomM is reachable again", "ok");
     loadSidebar();
@@ -240,6 +263,7 @@ $("#menubar").addEventListener("click", (e) => {
   const item = e.target.closest("[data-menu]")?.dataset.menu;
   if (item === "settings") openSettings();
   if (item === "about") openAbout();
+  if (item === "user") openSettings("server");
 });
 
 function showUpdate(update) {
@@ -1063,16 +1087,31 @@ function renderDetail() {
   renderDetailActions();
 }
 
+/** Why this game's saves cannot be synced right now, or null when they can. */
+function syncBlocker(r) {
+  const job = state.jobs.get(r.id);
+  if (!r.installed) return "Download the game first: saves are matched to its files.";
+  if (r.offline) return "RomM cannot be reached.";
+  if (!r.syncSaves) return "Save sync is turned off (Settings → Storage).";
+  if (!r.emulator) return "No emulator is set for this platform.";
+  if (r.saveMode === "off") return "Save sync is off for this emulator: choose where it keeps saves in Settings → Emulators.";
+  if (job && (job.type === "running" || job.type === "progress")) return "Wait for the game to close; its saves sync then.";
+  return null;
+}
+
 function savesHtml(r) {
   const rows = [...r.saves.map((s) => ({ ...s, kind: "Save" })), ...r.states.map((s) => ({ ...s, kind: "State" }))]
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
-  const status = !r.syncSaves ? "Save sync is turned off (Settings → Storage)."
+  const blocker = syncBlocker(r);
+  const status = r.offline ? "Offline: saves are kept on this PC and upload when RomM is reachable again."
+    : blocker && r.installed ? blocker
+    : !r.syncSaves ? "Save sync is turned off (Settings → Storage)."
     : r.saveMode === "off" ? "Save sync is off for this emulator (Settings → Emulators)."
-    : r.offline ? "Offline: saves are kept on this PC and upload when RomM is reachable again."
     : "Pulled before each launch, uploaded when the emulator closes.";
   if (r.offline) return `<h3>Saves</h3><div class="hint">${esc(status)}</div>`;
   return `<h3>Saves on RomM</h3>
-    <div class="hint" style="margin-bottom:6px">${esc(status)}</div>
+    <div class="row" style="margin-bottom:6px"><span class="hint" style="flex:1">${esc(status)}</span>
+      ${r.installed && !blocker ? '<button data-act="sync" title="Download newer saves from RomM, then upload the ones changed here">⟳ Sync now</button>' : ""}</div>
     ${rows.length ? `<div class="files">${rows.map((s) => `<div><span>${s.kind}: ${esc(s.name)}${s.emulator ? ` <span class="muted">(${esc(s.emulator)})</span>` : ""}</span>
       <span>${s.updatedAt ? esc(new Date(s.updatedAt).toLocaleString()) : ""} · ${fmtBytes(s.size)}</span></div>`).join("")}</div>`
     : '<div class="muted">None yet.</div>'}`;
@@ -1093,7 +1132,7 @@ function renderDetailActions() {
       : `<button class="primary" data-act="play">▶ Play</button>`}
     ${!r.installed && !busy && !running ? '<button data-act="install">⭳ Download only</button>' : ""}
     ${r.offline ? "" : (r.collections ?? []).some((c) => c.isFavorite) ? '<button data-act="unfav" title="Remove from your RomM favourites">★ Favourite</button>' : '<button data-act="fav" title="Add to your RomM favourites">☆ Favourite</button>'}
-    ${r.installed && !busy && !running && r.syncSaves && r.saveMode !== "off" && !r.offline ? '<button data-act="sync">⟳ Sync saves</button>' : ""}
+    ${r.installed ? `<button data-act="sync" ${syncBlocker(r) ? `disabled title="${esc(syncBlocker(r))}"` : 'title="Download newer saves from RomM, then upload the ones changed here"'}>⟳ Sync saves</button>` : ""}
     ${r.installed && !busy && !running ? '<button data-act="folder">Open folder</button><button class="danger" data-act="uninstall">Delete local copy</button>' : ""}
     ${r.offline ? "" : '<button data-act="web">Open in RomM</button>'}`;
   if (busy) {
@@ -1150,7 +1189,18 @@ $("#detail").addEventListener("click", async (e) => {
       detailRom = await api("rom:get", r.id);
       renderDetail();
     }
-    if (act === "sync") toast(await api("game:syncSaves", r.id), "ok");
+    if (act === "sync") {
+      $$('[data-act="sync"]').forEach((b) => { b.disabled = true; b.textContent = "Syncing…"; });
+      try {
+        toast(`${r.name}: ${await api("game:syncSaves", r.id)}`, "ok");
+      } finally {
+        // Refresh the saves RomM now holds.
+        if (state.detailId === r.id) {
+          detailRom = await api("rom:get", r.id).catch(() => detailRom);
+          renderDetail();
+        }
+      }
+    }
     if (act === "web") await api("open:external", r.webUrl);
     if (act === "map") return openSettings("platforms", r.platformSlug);
     if (act === "uninstall") {
@@ -1252,6 +1302,8 @@ function renderServer() {
     $("#s-result").textContent = "Testing…";
     try {
       const me = await api("server:test");
+      user.name = me.username;
+      renderUser();
       $("#s-result").innerHTML = `<span style="color:var(--ok)">✓ Connected as ${esc(me.username)}${me.version ? ` · RomM ${esc(me.version)}` : ""}</span>`;
       loadSidebar();
     } catch (error) {
@@ -1862,6 +1914,7 @@ function renderPlan() {
     return;
   }
   state.online = true;
+  void refreshUser();
   loadSidebar();
   setView({ kind: "all", title: "All games" });
 })();

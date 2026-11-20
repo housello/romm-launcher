@@ -60,6 +60,7 @@ Build `release/RomM-Launcher.exe` with `npm run package`. `npm run release` also
 ## Setup
 
 1. **Settings → Server**: URL, username/password (HTTP Basic) or a RomM client/API token. *Save & test.*
+   The RomM account the launcher signs in with is shown at the right of the menu bar.
 2. **Settings → Emulators**: add one from a preset (RetroArch, Dolphin, PCSX2, DuckStation, PPSSPP,
    RPCS3, Cemu, Ryujinx, Azahar, melonDS, mGBA, Flycast, xemu, Xenia, MAME, DOSBox, Custom),
    or click **Detect RetroArch**. Adding a preset automatically maps it to the platforms it
@@ -234,7 +235,10 @@ deleted if the upload fails).
 **No save is ever lost**: before a server copy replaces a local file, the local file is
 copied to `.backups\` in the game's save folder (last 10 per file). When both sides changed,
 the newer one wins and the other stays in the backups. The game page lists the saves
-on RomM and has a **Sync saves** button.
+on RomM, and **Sync saves** (or **Sync now** in its Saves section) syncs that one game whenever
+you like: newer saves come down from RomM, then the ones changed here go up. For a downloaded game
+whose saves cannot sync, the button is greyed and its tooltip says why (sync off, no save mode for
+the emulator, offline, or the game is running).
 
 Uses the `/api/saves` and `/api/states` endpoints (no device registration).
 
