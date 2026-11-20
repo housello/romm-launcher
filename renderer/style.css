@@ -275,3 +275,10 @@ table.platforms td .row button { padding: 7px 9px; }
 #grid.list .play-btn { grid-area: play; position: static; transform: none; opacity: .55; width: 30px; height: 30px; font-size: 13px; box-shadow: none; }
 #grid.list .card:hover .play-btn { opacity: 1; }
 #grid.list .bar { left: 0; right: 0; top: auto; bottom: 0; height: 3px; border-radius: 0; }
+
+/* Save conflict dialog: one block per file. */
+#chooser .conflict { padding: 8px 10px; border-bottom: 1px solid var(--line); }
+#chooser .conflict label { display: block; margin-top: 3px; font-size: 13px; cursor: pointer; }
+#chooser .conflict .lbl { font-weight: 600; }
+.sync-folders label { display: block; margin-bottom: 3px; cursor: pointer; }
+.sync-folders button { margin-top: 4px; }

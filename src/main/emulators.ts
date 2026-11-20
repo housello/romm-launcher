@@ -34,7 +34,49 @@ export interface Preset {
   single?: boolean;
   /** Created next to the executable so the emulator keeps its settings in its own folder. */
   portable?: { file?: string; dir?: string };
+  /**
+   * Folders holding its saves, for WebDAV sync. `paths` are tried in order (relative
+   * to the executable's folder, or %ENV%-prefixed), the first that exists wins;
+   * `on` marks the ones synced by default.
+   */
+  saveFolders?: Array<{ name: string; paths: string[]; on: boolean }>;
 }
+
+const docs = (app: string, sub: string) => `%USERPROFILE%\\Documents\\${app}\\${sub}`;
+const sf = (name: string, paths: string[], on = true) => ({ name, paths, on });
+
+/** Where each emulator keeps saves: portable layout first, then its usual installed location. */
+const SAVE_FOLDERS: Record<string, Preset["saveFolders"]> = {
+  retroarch: [sf("saves", ["saves"]), sf("states", ["states"])],
+  dolphin: [
+    sf("GC", ["User\\GC", docs("Dolphin Emulator", "GC"), "%APPDATA%\\Dolphin Emulator\\GC"]),
+    sf("Wii-title", ["User\\Wii\\title", docs("Dolphin Emulator", "Wii\\title"), "%APPDATA%\\Dolphin Emulator\\Wii\\title"]),
+    sf("StateSaves", ["User\\StateSaves", docs("Dolphin Emulator", "StateSaves")], false),
+  ],
+  pcsx2: [sf("memcards", ["memcards", docs("PCSX2", "memcards")]), sf("sstates", ["sstates", docs("PCSX2", "sstates")], false)],
+  duckstation: [sf("memcards", ["memcards", docs("DuckStation", "memcards")]), sf("savestates", ["savestates", docs("DuckStation", "savestates")])],
+  ppsspp: [
+    sf("SAVEDATA", ["memstick\\PSP\\SAVEDATA", docs("PPSSPP", "PSP\\SAVEDATA")]),
+    sf("PPSSPP_STATE", ["memstick\\PSP\\PPSSPP_STATE", docs("PPSSPP", "PSP\\PPSSPP_STATE")]),
+  ],
+  rpcs3: [sf("savedata", ["dev_hdd0\\home\\00000001\\savedata"])],
+  shadps4: [sf("savedata", ["user\\savedata", "%APPDATA%\\shadPS4\\savedata"])],
+  vita3k: [sf("savedata", ["ux0\\user\\00\\savedata", "%APPDATA%\\Vita3K\\Vita3K\\ux0\\user\\00\\savedata"])],
+  cemu: [sf("save", ["portable\\mlc01\\usr\\save", "mlc01\\usr\\save", "%APPDATA%\\Cemu\\mlc01\\usr\\save"])],
+  ryujinx: [sf("save", ["portable\\bis\\user\\save", "%APPDATA%\\Ryujinx\\bis\\user\\save"])],
+  azahar: [
+    sf("sdmc", ["user\\sdmc\\Nintendo 3DS", "%APPDATA%\\Azahar\\sdmc\\Nintendo 3DS"]),
+    sf("states", ["user\\states", "%APPDATA%\\Azahar\\states"]),
+  ],
+  snes9x: [sf("Saves", ["Saves"])],
+  mesen: [sf("Saves", ["Saves", docs("Mesen2", "Saves")]), sf("SaveStates", ["SaveStates", docs("Mesen2", "SaveStates")])],
+  flycast: [sf("data", ["data", "%APPDATA%\\flycast\\data"])],
+  xenia: [sf("content", ["content", docs("Xenia", "content")])],
+  mame: [sf("nvram", ["nvram"]), sf("cfg", ["cfg"]), sf("sta", ["sta"])],
+  supermodel: [sf("NVRAM", ["NVRAM"]), sf("Saves", ["Saves"])],
+  fbneo: [sf("savestates", ["savestates"])],
+  openmsx: [sf("persistent", [docs("openMSX", "persistent")])],
+};
 
 const gh = (repo: string, asset: string): EmulatorSource => ({ kind: "github", repo, asset });
 
@@ -115,6 +157,8 @@ export const PRESETS: Preset[] = [
     website: "https://dosbox-x.com", source: gh("joncampbell123/dosbox-x", "vsbuild-win64-.*-portable\\.zip$") },
   { key: "custom", name: "Custom", exe: "", args: '"{rom}"', extractZip: false, platforms: [] },
 ];
+
+for (const preset of PRESETS) preset.saveFolders = SAVE_FOLDERS[preset.key];
 
 /** Suggested libretro core per RomM platform slug. */
 export const DEFAULT_CORES: Record<string, string> = {

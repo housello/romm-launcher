@@ -207,8 +207,37 @@ play the romset.
 
 ## Save sync
 
-On by default (Settings → Storage). With sync turned off, every emulator uses its own
-native save folders and the launcher adds nothing to its command line. With sync on, for every launch:
+Settings → Storage → **Save sync** is **Off**, **RomM** (the default) or **WebDAV**. With sync off,
+every emulator uses its own native save folders and the launcher adds nothing to its command line.
+
+### WebDAV (Nextcloud, ownCloud…)
+
+Syncs the **save folders of each emulator** with a WebDAV folder, two ways:
+
+```
+<folder>/<emulator>/<save folder>/...   e.g.  RomM Launcher Saves/pcsx2/memcards/Mcd001.ps2
+```
+
+- Set the WebDAV address (for Nextcloud: `https://<server>/remote.php/dav/files/<user>`),
+  username, password (a Nextcloud *app password* is best) and folder, then **Save & test connection**.
+  The password is stored encrypted, like the RomM one.
+- **Settings → Emulators** lists each emulator's save folders with a checkbox. The useful ones
+  are ticked by default: RetroArch `saves`/`states`, Dolphin GameCube and Wii saves, PCSX2 and
+  DuckStation memory cards, PPSSPP `SAVEDATA`, RPCS3 and shadPS4 save data, Cemu, Ryujinx and
+  Azahar saves, MAME `nvram`/`cfg`/`sta`, and more. Both the portable layout (inside the emulator's
+  folder) and the usual Documents/AppData locations are known. **Add folder…** adds any other.
+- The emulator's folders sync **before a game starts and after it closes**, and on demand with
+  **Sync now** (a game's details) or **Sync all now** (Settings → Storage).
+- A file changed on one side only is copied to the other. **Nothing is ever deleted**: a file
+  missing on one side is copied back from the other.
+- A file changed **on both sides** since the last sync is a **conflict**: nothing is overwritten
+  and the launcher asks which copy to keep (dates and sizes shown, the newer preselected). The other
+  copy goes to `save-backups` in the launcher's data folder; *Decide later* leaves both as they are
+  and asks again at the next sync.
+
+### RomM
+
+With sync on, for every launch:
 
 1. **Before the emulator starts**, the newest save and states on RomM for that game are
    downloaded, if they changed since the last sync.

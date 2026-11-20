@@ -83,6 +83,8 @@ const CARRY_OVER = [
   "save-sync.json",
   "mame-rename-undo.json",
   "last-versions.json",
+  "folder-sync.json",
+  "play-sessions.json",
 ];
 
 type PathMap = (p: string) => string;

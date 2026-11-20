@@ -13,7 +13,8 @@ import { checkForUpdate, cleanUpUpdate, installUpdate, type UpdateInfo } from ".
 import { checkEmulatorUpdates, installCores, installDir, installEmulator } from "./emulatorManager";
 import { lastVersions, rememberVersion } from "./lastVersions";
 import { applyRenames, buildPlan, undoInfo, undoLast } from "./mame";
-import { cancel, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
+import { syncFoldersOf, localPathOf, webdavClient } from "./folderSync";
+import { cancel, resolveConflicts, syncAllFolders, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
 
 // Test data folder: ROMM_LAUNCHER_DATA keeps settings elsewhere. The packaged launcher keeps
 // everything next to its exe unless an "appdata" file is there (see paths.ts); that wins.
@@ -384,6 +385,14 @@ function registerIpc(): void {
   });
   handle("game:chooseFile", (id: number, rel: string | null) => resolveFileChoice(id, rel));
   handle("game:syncSaves", (id: number) => syncNow(id, emit));
+  handle("saves:resolveConflicts", (requestId: string, answers: Record<string, "local" | "remote" | "skip"> | null) => resolveConflicts(String(requestId), answers));
+  handle("saves:syncAll", () => syncAllFolders(emit));
+  handle("saves:folders", () => Object.fromEntries(loadConfig().emulators.map((e) => [e.id, syncFoldersOf(e).map((f) => ({ ...f, local: localPathOf(e, f), exists: existsSync(localPathOf(e, f)) }))])));
+  handle("saves:testWebdav", async () => {
+    const { dav, base } = webdavClient();
+    await dav.check(base);
+    return true;
+  });
   handle("game:uninstall", (id: number) => uninstall(id));
   handle("game:cancel", (id: number) => cancel(id));
   handle("game:setLaunchFile", (id: number, rel: string) => setLaunchFile(id, rel));

@@ -13,6 +13,7 @@ import { buildArgs } from "./emulators";
 import { getInstalled, listInstalled, metaOf, putInstalled, removeInstalled, type InstalledGame } from "./library";
 import { checkServer, isOffline, noteFailure } from "./connection";
 import { recordSession } from "./playSessions";
+import { describeFolderSync, syncEmulatorFolders, syncFoldersOf, type Conflict, type Resolution } from "./folderSync";
 import { findChdFolder, isArcade, setNameOf } from "./chd";
 import { resolvePath } from "./paths";
 import { readZipFiles } from "./zip";
@@ -26,7 +27,8 @@ export type LaunchEvent =
   | { romId: number; type: "installed" }
   | { romId: number; type: "idle" }
   | { romId: number; type: "choose-file"; files: string[]; suggested: string }
-  | { romId: number; type: "notice"; message: string; level: "ok" | "error" | "" };
+  | { romId: number; type: "notice"; message: string; level: "ok" | "error" | "" }
+  | { romId: number; type: "save-conflicts"; requestId: string; emulator: string; conflicts: Conflict[] };
 
 type Emit = (event: LaunchEvent) => void;
 
@@ -441,7 +443,7 @@ export async function uninstall(romId: number): Promise<void> {
   // be deleted with it: upload them first, and refuse if that fails.
   const current = getInstalled(romId);
   const resolved = current && resolveEmulator([current.platformSlug]);
-  if (current && resolved && loadConfig().syncSaves) {
+  if (current && resolved && loadConfig().syncSaves && !webdavSyncOn()) {
     const { ctx } = await prepareSaves(resolved.emulator, resolved.mapping, current);
     const inside = ctx && ctx.targets.some((t) => (t.dir + sep).toLowerCase().startsWith((current.dir + sep).toLowerCase()));
     if (ctx && inside) {
@@ -529,7 +531,9 @@ export async function launch(romId: number, emit: Emit, hooks: { onStart: () => 
   // before the emulator can open them. A sync problem never blocks the game.
   let saveCtx: SyncContext | null = null;
   let extraArgs: string[] = [];
-  try {
+  const useWebdav = webdavSyncOn();
+  if (useWebdav) await syncFoldersFor(emulator, romId, emit);
+  else try {
     const setup = await prepareSaves(emulator, mapping, game);
     extraArgs = setup.extraArgs;
     if (loadConfig().syncSaves && setup.ctx && isOffline()) {
@@ -576,7 +580,65 @@ export async function launch(romId: number, emit: Emit, hooks: { onStart: () => 
     recordSession(romId, started, ended);
     hooks.onExit();
     if (saveCtx) void syncAfterExit(saveCtx, romId, emit);
+    if (useWebdav) {
+      pushing.add(romId);
+      // Some emulators flush the save a moment after their window closes.
+      void new Promise((r) => setTimeout(r, 1500))
+        .then(() => syncFoldersFor(emulator, romId, emit))
+        .finally(() => pushing.delete(romId));
+    }
   });
+}
+
+// ------------------------------------------------------------------ WebDAV save folders
+
+/** Save sync is on and goes to WebDAV (per emulator folder) rather than RomM. */
+export const webdavSyncOn = (): boolean => loadConfig().syncSaves && loadConfig().saveBackend === "webdav";
+
+const pendingConflicts = new Map<string, (answers: Record<string, Resolution>) => void>();
+
+/** The renderer's answer about the conflicts of one sync. */
+export function resolveConflicts(requestId: string, answers: Record<string, Resolution> | null): void {
+  pendingConflicts.get(requestId)?.(answers ?? {});
+  pendingConflicts.delete(requestId);
+}
+
+function askConflicts(romId: number, emulatorName: string, conflicts: Conflict[], emit: Emit): Promise<Record<string, Resolution>> {
+  const requestId = `${romId}-${Date.now()}`;
+  return new Promise((resolve) => {
+    pendingConflicts.set(requestId, resolve);
+    emit({ romId, type: "save-conflicts", requestId, emulator: emulatorName, conflicts });
+  });
+}
+
+/** Sync an emulator's save folders with WebDAV; problems are reported, never thrown. */
+async function syncFoldersFor(emulator: EmulatorDef, romId: number, emit: Emit): Promise<string> {
+  emit({ romId, type: "progress", label: "Syncing saves with WebDAV…", received: 0, total: 0 });
+  try {
+    const report = await syncEmulatorFolders(emulator, (conflicts) => askConflicts(romId, emulator.name, conflicts, emit));
+    const note = describeFolderSync(report);
+    const unresolved = report.conflicts.length - report.conflicts.filter((c) => report.uploaded.concat(report.downloaded).includes(`${c.folder}/${c.rel}`)).length;
+    const left = unresolved ? `${unresolved} save conflict${unresolved === 1 ? "" : "s"} left as they are; asked again at the next sync.` : "";
+    if (note) emit({ romId, type: "notice", message: note, level: "ok" });
+    if (left) emit({ romId, type: "notice", message: left, level: "error" });
+    return [note, left].filter(Boolean).join(". ") || "Saves already in sync with WebDAV.";
+  } catch (error) {
+    const message = `WebDAV save sync skipped: ${(error as Error).message}`;
+    emit({ romId, type: "notice", message, level: "error" });
+    return message;
+  } finally {
+    if (!running.has(romId)) emit({ romId, type: "idle" });
+  }
+}
+
+/** Sync the save folders of every emulator that has some (Settings → Storage → Sync now). */
+export async function syncAllFolders(emit: Emit): Promise<string[]> {
+  const out: string[] = [];
+  for (const emulator of loadConfig().emulators) {
+    if (!syncFoldersOf(emulator).some((f) => f.enabled)) continue;
+    out.push(`${emulator.name}: ${await syncFoldersFor({ ...emulator, path: resolvePath(emulator.path) }, 0, emit)}`);
+  }
+  return out;
 }
 
 const pushing = new Set<number>();
@@ -612,6 +674,7 @@ export async function syncNow(romId: number, emit: Emit): Promise<string> {
   const resolved = resolveEmulator([game.platformSlug]);
   if (!resolved) throw new LaunchError(`No emulator is set for platform "${game.platformSlug}".`, "no-emulator");
   if (running.has(romId) || pushing.has(romId)) throw new LaunchError("The game is running; saves sync when it exits.");
+  if (webdavSyncOn()) return syncFoldersFor(resolved.emulator, romId, emit);
   const { ctx } = await prepareSaves(resolved.emulator, resolved.mapping, game);
   if (!ctx) throw new LaunchError(`Save sync is off for ${resolved.emulator.name}. Set it under Settings → Emulators.`);
   const pulled = await pullSaves(ctx, gameSaveDir(game.platformSlug, romId));

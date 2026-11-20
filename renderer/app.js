@@ -916,6 +916,42 @@ function choose({ title, message = "", items, selected, okLabel = "OK" }) {
   });
 }
 
+/**
+ * Ask which copy of each conflicting save to keep: this PC's or WebDAV's (the newer
+ * preselected). Resolves to { key: "local" | "remote" }, or null to decide later.
+ */
+function chooseConflicts(emulator, conflicts) {
+  return new Promise((resolve) => {
+    const box = $("#chooser");
+    const when = (t) => (t ? new Date(t).toLocaleString() : "?");
+    const picks = Object.fromEntries(conflicts.map((c) => [c.key, c.remote.mtime > c.local.mtime ? "remote" : "local"]));
+    box.innerHTML = `<div class="box" role="dialog" aria-modal="true" style="max-width:760px">
+      <h2>Save conflict — ${esc(emulator)}</h2>
+      <div class="msg">These files changed both on this PC and on WebDAV since the last sync. Pick the copy to keep;
+        the other one is saved in <code>save-backups</code>, so nothing is lost.</div>
+      <div class="list">${conflicts.map((c, n) => `<div class="conflict" data-n="${n}">
+        <div class="lbl" title="${esc(c.folder + "/" + c.rel)}">${esc(c.rel)} <span class="muted">${esc(c.folder)}</span></div>
+        <label><input type="radio" name="c${n}" value="local" ${picks[c.key] === "local" ? "checked" : ""}> This PC · ${esc(when(c.local.mtime))} · ${fmtBytes(c.local.size)}</label>
+        <label><input type="radio" name="c${n}" value="remote" ${picks[c.key] === "remote" ? "checked" : ""}> WebDAV · ${esc(when(c.remote.mtime))} · ${fmtBytes(c.remote.size)}</label>
+      </div>`).join("")}</div>
+      <div class="foot"><button data-x title="Leave both as they are; asked again at the next sync">Decide later</button><button class="primary" data-ok>Keep selected</button></div></div>`;
+    box.hidden = false;
+    const finish = (value) => {
+      box.hidden = true;
+      box.innerHTML = "";
+      resolve(value);
+    };
+    box.onchange = (e) => {
+      const row = e.target.closest(".conflict");
+      if (row) picks[conflicts[+row.dataset.n].key] = e.target.value;
+    };
+    box.onclick = (e) => {
+      if (e.target.matches("[data-ok]")) finish(picks);
+      else if (e.target.matches("[data-x]")) finish(null);
+    };
+  });
+}
+
 /** Ask which version of a game to use; preselects a downloaded one. */
 function chooseVersion(item, verb) {
   const installed = item.versions.find((v) => v.installed);
@@ -989,6 +1025,9 @@ window.romm.onLaunchEvent((ev) => {
         okLabel: "Launch",
       }).then((rel) => api("game:chooseFile", id, rel));
       break;
+    case "save-conflicts":
+      chooseConflicts(ev.emulator, ev.conflicts).then((answers) => api("saves:resolveConflicts", ev.requestId, answers));
+      return;
     case "notice":
       toast(ev.message, ev.level);
       if (state.detailId === id) api("rom:get", id).then((rom) => { if (state.detailId === id) { detailRom = rom; renderDetail(); } }).catch(() => {});
@@ -1088,9 +1127,16 @@ function renderDetail() {
 }
 
 /** Why this game's saves cannot be synced right now, or null when they can. */
+const webdavSaves = () => state.config?.syncSaves && state.config?.saveBackend === "webdav";
+
 function syncBlocker(r) {
   const job = state.jobs.get(r.id);
   if (!r.installed) return "Download the game first: saves are matched to its files.";
+  if (webdavSaves()) {
+    if (!r.emulator) return "No emulator is set for this platform.";
+    if (job && (job.type === "running" || job.type === "progress")) return "Wait for the game to close; its saves sync then.";
+    return null;
+  }
   if (r.offline) return "RomM cannot be reached.";
   if (!r.syncSaves) return "Save sync is turned off (Settings → Storage).";
   if (!r.emulator) return "No emulator is set for this platform.";
@@ -1100,6 +1146,13 @@ function syncBlocker(r) {
 }
 
 function savesHtml(r) {
+  if (webdavSaves()) {
+    const blocker = syncBlocker(r);
+    return `<h3>Saves on WebDAV</h3>
+      <div class="row" style="margin-bottom:6px"><span class="hint" style="flex:1">${esc(blocker && r.installed ? blocker
+        : `The save folders of ${r.emulator ?? "its emulator"} sync with WebDAV before each launch and after it closes (Settings → Emulators chooses them).`)}</span>
+        ${r.installed && !blocker ? '<button data-act="sync" title="Sync this emulator\'s save folders with WebDAV now">⟳ Sync now</button>' : ""}</div>`;
+  }
   const rows = [...r.saves.map((s) => ({ ...s, kind: "Save" })), ...r.states.map((s) => ({ ...s, kind: "State" }))]
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
   const blocker = syncBlocker(r);
@@ -1402,8 +1455,20 @@ function managedLine(e) {
       <button data-emu-folder="${key}">Open folder</button>`}</div>`;
 }
 
-function renderEmulators() {
+/** An emulator card's WebDAV save folders: one checkbox each, and Add folder. */
+function syncFoldersHtml(e, folders) {
+  const list = folders?.[e.id] ?? [];
+  return `<label>Synced save folders</label><div class="sync-folders">
+    ${list.length ? list.map((f, i) => `<label title="${esc(f.local)}"><input type="checkbox" data-sf="${i}" ${f.enabled ? "checked" : ""}>
+      <b>${esc(f.name)}</b> <span class="muted">${esc(f.local)}${f.exists ? "" : " — not there yet"}</span></label>`).join("")
+      : '<div class="muted">None known for this emulator; add the folder where it keeps saves.</div>'}
+    <button data-sf-add>Add folder…</button></div>`;
+}
+
+async function renderEmulators() {
   const c = state.config;
+  const webdav = c.syncSaves && c.saveBackend === "webdav";
+  const folders = webdav ? await api("saves:folders").catch(() => ({})) : null;
   const adding = [...emuCatalog.busy.keys()].filter((key) => !c.emulators.some((e) => e.managed?.key === key));
   $("#tab-body").innerHTML = `
     <div class="row" style="margin-bottom:14px">
@@ -1426,14 +1491,15 @@ function renderEmulators() {
         <label>Executable</label><div class="row"><input data-f="path" value="${esc(e.path)}"><button data-browse>Browse…</button></div>
         <label>Arguments</label><input data-f="args" value="${esc(e.args)}">
         <label></label><label><input type="checkbox" data-f="extractZip" ${e.extractZip ? "checked" : ""}> Extract .zip games before launching</label>
-        <label>Save sync</label>
-        <select data-f="saveMode">
+        ${webdav ? syncFoldersHtml(e, folders) : ""}
+        <label ${webdav ? "hidden" : ""}>Save sync</label>
+        <select data-f="saveMode" ${webdav ? "hidden" : ""}>
           <option value="off" ${modeOf(e) === "off" ? "selected" : ""}>Off</option>
           <option value="retroarch" ${modeOf(e) === "retroarch" ? "selected" : ""}>RetroArch (automatic)</option>
           <option value="custom" ${modeOf(e) === "custom" ? "selected" : ""}>Custom file patterns</option>
         </select>
-        <label class="pat" ${modeOf(e) === "custom" ? "" : "hidden"}>Save files</label><input class="pat" data-f="savePattern" value="${esc(e.savePattern ?? "")}" placeholder="{romDir}/{romName}.sav" ${modeOf(e) === "custom" ? "" : "hidden"}>
-        <label class="pat" ${modeOf(e) === "custom" ? "" : "hidden"}>State files</label><input class="pat" data-f="statePattern" value="${esc(e.statePattern ?? "")}" placeholder="{romDir}/{romName}.ss*" ${modeOf(e) === "custom" ? "" : "hidden"}>
+        <label class="pat" ${modeOf(e) === "custom" && !webdav ? "" : "hidden"}>Save files</label><input class="pat" data-f="savePattern" value="${esc(e.savePattern ?? "")}" placeholder="{romDir}/{romName}.sav" ${modeOf(e) === "custom" && !webdav ? "" : "hidden"}>
+        <label class="pat" ${modeOf(e) === "custom" && !webdav ? "" : "hidden"}>State files</label><input class="pat" data-f="statePattern" value="${esc(e.statePattern ?? "")}" placeholder="{romDir}/{romName}.ss*" ${modeOf(e) === "custom" && !webdav ? "" : "hidden"}>
       </div>
     </div>`).join(""));
 
@@ -1452,7 +1518,18 @@ function renderEmulators() {
     }));
     await save({ emulators }, true);
   };
+  // A synced-folder list, written whole so the catalog defaults become the emulator's own.
+  const saveFolders = async (id, list) => {
+    const emulators = state.config.emulators.map((x) => (x.id === id ? { ...x, syncFolders: list.map(({ name, path, enabled }) => ({ name, path, enabled })) } : x));
+    await save({ emulators }, true);
+    renderEmulators();
+  };
   $("#e-list").addEventListener("change", async (e) => {
+    if (e.target.dataset.sf !== undefined) {
+      const id = e.target.closest(".emu").dataset.id;
+      const list = (folders?.[id] ?? []).map((f, i) => (i === Number(e.target.dataset.sf) ? { ...f, enabled: e.target.checked } : f));
+      return saveFolders(id, list);
+    }
     if (e.target.dataset.f === "saveMode") {
       const box = e.target.closest(".emu");
       $$(".pat", box).forEach((el) => (el.hidden = e.target.value !== "custom"));
@@ -1476,6 +1553,12 @@ function renderEmulators() {
     const folder = e.target.closest("[data-emu-folder]")?.dataset.emuFolder;
     if (folder) return api("emulators:openFolder", folder);
     if (e.target.closest("[data-emu-cores]")) return downloadCores(state.config.emulators.find((x) => x.id === box.dataset.id));
+    if (e.target.closest("[data-sf-add]")) {
+      const dir = await api("dialog:pickFolder");
+      if (!dir) return;
+      const name = dir.split(/[\\/]/).filter(Boolean).pop() || "saves";
+      return saveFolders(box.dataset.id, [...(folders?.[box.dataset.id] ?? []), { name, path: dir, enabled: true }]);
+    }
   });
 
   const addFromPreset = async (preset, path = "") => {
@@ -1677,10 +1760,21 @@ async function renderStorage() {
       <label></label><label><input type="checkbox" id="g-min" ${c.minimizeOnLaunch ? "checked" : ""}> Minimize the launcher while a game is running</label>
       <label>Versions</label><label><input type="checkbox" id="g-group" ${c.groupVersions ? "checked" : ""}> One card per game; other versions (regions, revisions) are chosen when playing</label>
       <label>Play time</label><label><input type="checkbox" id="g-playtime" ${c.reportPlayTime !== false ? "checked" : ""}> Send play sessions to RomM, which shows play time per game (RomM 5.5 or later; sent later when played offline)</label>
-      <label>Save sync</label><label><input type="checkbox" id="g-sync" ${c.syncSaves ? "checked" : ""}> Sync saves and save states with RomM</label>
-      <label>Save folder</label><div class="row"><input id="g-saves" value="${esc(c.saveDir)}"><button id="g-browse-saves">Browse…</button></div>
-      <label></label><div class="hint">Synced saves live here, one folder per game, and are kept when you delete a game's local copy.
+      <label>Save sync</label><div>
+        <label style="display:block"><input type="radio" name="g-sync" value="off" ${!c.syncSaves ? "checked" : ""}> Off</label>
+        <label style="display:block;margin-top:4px"><input type="radio" name="g-sync" value="romm" ${c.syncSaves && c.saveBackend !== "webdav" ? "checked" : ""}> RomM — each game's saves, matched to the game</label>
+        <label style="display:block;margin-top:4px"><input type="radio" name="g-sync" value="webdav" ${c.syncSaves && c.saveBackend === "webdav" ? "checked" : ""}> WebDAV (Nextcloud…) — the save folders of each emulator, chosen in Settings → Emulators</label></div>
+      <label class="sync-romm">Save folder</label><div class="row sync-romm"><input id="g-saves" value="${esc(c.saveDir)}"><button id="g-browse-saves">Browse…</button></div>
+      <label class="sync-romm"></label><div class="hint sync-romm">Synced saves live here, one folder per game, and are kept when you delete a game's local copy.
         Every local save is backed up to <code>.backups</code> before a newer server copy replaces it.</div>
+      <label class="sync-webdav">WebDAV address</label><input class="sync-webdav" id="g-dav-url" value="${esc(c.webdav?.url ?? "")}" placeholder="https://cloud.example.com/remote.php/dav/files/USERNAME">
+      <label class="sync-webdav">Username</label><input class="sync-webdav" id="g-dav-user" value="${esc(c.webdav?.username ?? "")}" autocomplete="off">
+      <label class="sync-webdav">Password</label><input class="sync-webdav" id="g-dav-pass" type="password" autocomplete="new-password" placeholder="${c.hasWebdavPassword ? "(saved — leave empty to keep)" : "For Nextcloud, an app password (Settings → Security)"}">
+      <label class="sync-webdav">Folder</label><input class="sync-webdav" id="g-dav-folder" value="${esc(c.webdav?.folder ?? "RomM Launcher Saves")}">
+      <label class="sync-webdav"></label><div class="row sync-webdav"><button id="g-dav-test">Save &amp; test connection</button><button id="g-dav-sync">Sync all now</button><span id="g-dav-result" class="muted"></span></div>
+      <label class="sync-webdav"></label><div class="hint sync-webdav">Each emulator's save folders are mirrored to <code>&lt;folder&gt;/&lt;emulator&gt;/&lt;save folder&gt;</code>,
+        before a game starts and after it closes. Nothing is deleted on either side. When a file changed both here and on WebDAV,
+        you are asked which to keep; the other copy goes to <code>save-backups</code> in the launcher's data folder.</div>
       <label>Cover image cache</label><div class="row"><span>${fmtBytes(info.imageBytes)}</span><button id="g-clear">Clear</button></div>
       <label></label><div class="row"><button class="primary" id="g-save">Save</button></div>
     </div>`;
@@ -1707,12 +1801,52 @@ async function renderStorage() {
       renderStorage();
     }
   }));
+  const syncMode = () => $('[name="g-sync"]:checked')?.value ?? "off";
+  const showSyncFields = () => {
+    $$(".sync-romm").forEach((el) => (el.hidden = syncMode() !== "romm"));
+    $$(".sync-webdav").forEach((el) => (el.hidden = syncMode() !== "webdav"));
+  };
+  showSyncFields();
+  $$('[name="g-sync"]').forEach((r) => r.addEventListener("change", showSyncFields));
+  const webdavPatch = () => {
+    const patch = {
+      syncSaves: syncMode() !== "off",
+      saveBackend: syncMode() === "webdav" ? "webdav" : "romm",
+      webdav: { url: $("#g-dav-url").value.trim(), username: $("#g-dav-user").value.trim(), folder: $("#g-dav-folder").value.trim() || "RomM Launcher Saves" },
+    };
+    if ($("#g-dav-pass").value) patch.webdavPassword = $("#g-dav-pass").value;
+    return patch;
+  };
+  $("#g-dav-test").addEventListener("click", async () => {
+    await save(webdavPatch(), true);
+    $("#g-dav-pass").value = "";
+    $("#g-dav-result").textContent = "Testing…";
+    try {
+      await api("saves:testWebdav");
+      $("#g-dav-result").innerHTML = '<span style="color:var(--ok)">✓ Connected</span>';
+    } catch (error) {
+      $("#g-dav-result").innerHTML = `<span style="color:var(--danger)">✕ ${esc(error.message)}</span>`;
+    }
+  });
+  $("#g-dav-sync").addEventListener("click", async (e) => {
+    await save(webdavPatch(), true);
+    e.target.disabled = true;
+    $("#g-dav-result").textContent = "Syncing…";
+    try {
+      const lines = await api("saves:syncAll");
+      $("#g-dav-result").textContent = lines.length ? lines.join(" · ") : "No emulator has a save folder to sync.";
+    } catch (error) {
+      $("#g-dav-result").textContent = error.message;
+    } finally {
+      e.target.disabled = false;
+    }
+  });
   $("#g-save").addEventListener("click", () => save({
+    ...webdavPatch(),
     romDir: $("#g-dir").value.trim(),
     emulatorDir: $("#g-emudir").value.trim() || "emulators",
     pageSize: Math.max(20, Math.min(500, Number($("#g-page").value) || 60)),
     minimizeOnLaunch: $("#g-min").checked,
-    syncSaves: $("#g-sync").checked,
     reportPlayTime: $("#g-playtime").checked,
     groupVersions: $("#g-group").checked,
     multiFileLayout: $('[name="g-layout"]:checked')?.value === "flat" ? "flat" : "subfolder",

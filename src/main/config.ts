@@ -28,6 +28,16 @@ export interface EmulatorDef {
   statePattern?: string;
   /** Installed by the launcher from its catalog (see emulatorManager.ts), so it can update it. */
   managed?: ManagedInstall;
+  /** Save folders synced with WebDAV; when unset, the catalog's defaults for this emulator. */
+  syncFolders?: SyncFolder[];
+}
+
+export interface SyncFolder {
+  /** The folder's name on WebDAV, under the emulator's own folder there. */
+  name: string;
+  /** Absolute, %ENV%-prefixed, or relative to the emulator's folder. */
+  path: string;
+  enabled: boolean;
 }
 
 export interface ManagedInstall {
@@ -81,16 +91,29 @@ export interface Config {
   multiFileLayout: "subfolder" | "flat";
   /** "system" follows Windows' light/dark mode. */
   theme: "system" | "light" | "dark";
-  /** Pull saves/states from RomM before a launch and push changes after exit. */
+  /** Sync saves at all: before a launch and after the emulator exits. */
   syncSaves: boolean;
+  /** Where saves sync with: RomM (per game) or a WebDAV folder (per emulator folder). */
+  saveBackend: "romm" | "webdav";
+  webdav: WebdavSettings;
+  /** Encrypted like passwordEnc; never sent to the renderer. */
+  webdavPasswordEnc: string;
   /** Where synced saves live, one folder per game; kept when a game copy is deleted. */
   saveDir: string;
   emulators: EmulatorDef[];
   platforms: Record<string, PlatformMapping>;
 }
 
-/** Shape sent to the renderer: no password, only whether one is set. */
-export type PublicConfig = Omit<Config, "passwordEnc"> & { hasPassword: boolean };
+export interface WebdavSettings {
+  /** The WebDAV root, e.g. https://cloud.example.com/remote.php/dav/files/me */
+  url: string;
+  username: string;
+  /** Folder under the root that holds the synced save folders. */
+  folder: string;
+}
+
+/** Shape sent to the renderer: no passwords, only whether they are set. */
+export type PublicConfig = Omit<Config, "passwordEnc" | "webdavPasswordEnc"> & { hasPassword: boolean; hasWebdavPassword: boolean };
 
 const file = () => join(dataDir(), "launcher-config.json");
 /**
@@ -106,6 +129,7 @@ const legacyCredentialsFile = () => join(dataDir(), "credentials.json");
 interface Credentials {
   passwordEnc: string;
   token: string;
+  webdavPasswordEnc: string;
 }
 
 function readCredentials(): Credentials | null {
@@ -117,11 +141,11 @@ function readCredentials(): Credentials | null {
         ? Buffer.from(raw.subarray(4).toString(), "base64").toString("utf8")
         : safeStorage.decryptString(raw);
       const c = JSON.parse(text) as Partial<Credentials>;
-      return { passwordEnc: c.passwordEnc ?? "", token: c.token ?? "" };
+      return { passwordEnc: c.passwordEnc ?? "", token: c.token ?? "", webdavPasswordEnc: c.webdavPasswordEnc ?? "" };
     }
     if (existsSync(legacyCredentialsFile())) {
       const c = JSON.parse(readFileSync(legacyCredentialsFile(), "utf8")) as Partial<Credentials>;
-      return { passwordEnc: c.passwordEnc ?? "", token: c.token ?? "" };
+      return { passwordEnc: c.passwordEnc ?? "", token: c.token ?? "", webdavPasswordEnc: "" };
     }
   } catch (error) {
     // Another PC / Windows user: the login has to be entered again.
@@ -162,6 +186,9 @@ function defaults(): Config {
     multiFileLayout: "subfolder",
     theme: "system",
     syncSaves: true,
+    saveBackend: "romm",
+    webdav: { url: "", username: "", folder: "RomM Launcher Saves" },
+    webdavPasswordEnc: "",
     saveDir: isPortable() ? "saves" : join(app.getPath("userData"), "saves"),
     emulators: [],
     platforms: {},
@@ -187,8 +214,8 @@ export function loadConfig(): Config {
 }
 
 export function saveConfig(next: Config): void {
-  const { passwordEnc, token, ...settings } = next;
-  writeCredentials({ passwordEnc, token });
+  const { passwordEnc, token, webdavPasswordEnc, ...settings } = next;
+  writeCredentials({ passwordEnc, token, webdavPasswordEnc });
   mkdirSync(dataDir(), { recursive: true });
   const tmp = file() + ".tmp";
   writeFileSync(tmp, JSON.stringify(settings, null, 2), "utf8");
@@ -197,15 +224,16 @@ export function saveConfig(next: Config): void {
 }
 
 export function publicConfig(config = loadConfig()): PublicConfig {
-  const { passwordEnc, ...rest } = config;
-  return { ...rest, hasPassword: passwordEnc.length > 0 };
+  const { passwordEnc, webdavPasswordEnc, ...rest } = config;
+  return { ...rest, hasPassword: passwordEnc.length > 0, hasWebdavPassword: webdavPasswordEnc.length > 0 };
 }
 
-/** Merge a partial update from the renderer. `password` (plain) is encrypted here. */
-export function updateConfig(patch: Partial<PublicConfig> & { password?: string }): PublicConfig {
+/** Merge a partial update from the renderer. Plain passwords are encrypted here. */
+export function updateConfig(patch: Partial<PublicConfig> & { password?: string; webdavPassword?: string }): PublicConfig {
   const current = loadConfig();
-  const { password, hasPassword: _ignored, ...rest } = patch;
+  const { password, webdavPassword, hasPassword: _ignored, hasWebdavPassword: _ignored2, ...rest } = patch;
   const next: Config = { ...current, ...rest };
+  if (typeof webdavPassword === "string") next.webdavPasswordEnc = webdavPassword ? encrypt(webdavPassword) : "";
   if (typeof next.serverUrl === "string") next.serverUrl = next.serverUrl.trim().replace(/\/+$/, "");
   if (typeof password === "string") next.passwordEnc = password ? encrypt(password) : "";
   saveConfig(next);
@@ -218,7 +246,14 @@ function encrypt(plain: string): string {
 }
 
 export function getPassword(config = loadConfig()): string {
-  const value = config.passwordEnc;
+  return decrypt(config.passwordEnc);
+}
+
+export function getWebdavPassword(config = loadConfig()): string {
+  return decrypt(config.webdavPasswordEnc);
+}
+
+function decrypt(value: string): string {
   if (!value) return "";
   try {
     if (value.startsWith("enc:")) return safeStorage.decryptString(Buffer.from(value.slice(4), "base64"));
