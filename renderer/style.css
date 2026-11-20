@@ -242,3 +242,11 @@ table.platforms td .row button { padding: 7px 9px; }
 }
 #update-banner[hidden] { display: none; }
 #update-banner span { flex: 1; }
+
+/* Emulator catalog in Settings → Emulators. */
+.catalog { width: 100%; max-width: 1100px; border-collapse: collapse; margin-bottom: 18px; }
+.catalog td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.catalog td:first-child a { cursor: pointer; font-weight: 600; }
+.catalog td:nth-child(3) { font-size: 12px; }
+.catalog tr.muted td:first-child a { font-weight: 400; }
+.catalog .row { gap: 6px; flex-wrap: nowrap; }

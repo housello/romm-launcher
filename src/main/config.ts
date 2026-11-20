@@ -26,6 +26,18 @@ export interface EmulatorDef {
   savePattern?: string;
   /** File pattern for save states. */
   statePattern?: string;
+  /** Installed by the launcher from its catalog (see emulatorManager.ts), so it can update it. */
+  managed?: ManagedInstall;
+}
+
+export interface ManagedInstall {
+  /** The catalog preset's key. */
+  key: string;
+  /** Version as shown (release tag, or date for rolling builds). */
+  version: string;
+  /** Identifies the downloaded file, so a rebuilt "latest" release counts as new. */
+  assetKey: string;
+  installedAt: number;
 }
 
 export interface PlatformMapping {
@@ -47,6 +59,8 @@ export interface Config {
   token: string;
   allowSelfSigned: boolean;
   romDir: string;
+  /** Where the launcher installs emulators from its catalog, one folder each. */
+  emulatorDir: string;
   /** Hide the launcher window while a game is running. */
   minimizeOnLaunch: boolean;
   pageSize: number;
@@ -135,6 +149,7 @@ function defaults(): Config {
     allowSelfSigned: false,
     // Portable: next to the exe (relative); otherwise in AppData.
     romDir: isPortable() ? "roms" : join(app.getPath("userData"), "roms"),
+    emulatorDir: "emulators",
     minimizeOnLaunch: true,
     pageSize: 60,
     groupVersions: true,

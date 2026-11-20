@@ -1157,9 +1157,118 @@ function newId() { return Math.random().toString(36).slice(2, 10); }
 /** Same inference as the main process, for emulators saved before save sync existed. */
 const modeOf = (e) => e.saveMode || (/retroarch/i.test(e.path || "") ? "retroarch" : "off");
 
+// ---- emulator catalog: download, update
+
+const emuCatalog = { updates: {}, busy: new Map(), checked: false };
+
+window.romm.onEmuProgress((ev) => {
+  emuCatalog.busy.set(ev.key, ev.total ? `${ev.label} — ${fmtBytes(ev.received)} / ${fmtBytes(ev.total)}`
+    : ev.received ? `${ev.label} — ${fmtBytes(ev.received)}` : ev.label);
+  const cell = $(`[data-cat-status="${ev.key}"]`);
+  if (cell) cell.textContent = emuCatalog.busy.get(ev.key);
+});
+
+/** Platforms in the library, which new emulators are mapped to. */
+const librarySlugs = () => state.platforms.flatMap((p) => [p.slug, p.fsSlug]).filter(Boolean);
+
+function catalogHtml() {
+  const c = state.config;
+  const rows = presets.presets.filter((p) => p.source).map((p) => {
+    const installed = c.emulators.find((e) => e.managed?.key === p.key);
+    const update = emuCatalog.updates[p.key];
+    const busy = emuCatalog.busy.get(p.key);
+    const inLibrary = p.platforms.filter((s) => librarySlugs().includes(s));
+    const status = busy ? busy
+      : installed ? `Installed ${installed.managed.version}${update?.version ? ` · ${update.version} available` : update?.error ? ` · update check failed` : ""}`
+      : "";
+    const actions = busy ? "" : installed
+      ? `${update?.version ? `<button class="primary" data-cat-install="${p.key}">Update</button>` : ""}<button data-cat-folder="${p.key}">Open folder</button>`
+        + (p.key === "retroarch" ? '<button data-cat-cores>Download cores</button>' : "")
+      : `<button data-cat-install="${p.key}">Download</button>`;
+    return `<tr${inLibrary.length ? "" : ' class="muted"'}>
+      <td><a data-cat-site="${esc(p.website ?? "")}" title="${esc(p.website ?? "")}">${esc(p.name)}</a></td>
+      <td class="muted" title="${esc(p.platforms.join(", "))}">${esc((inLibrary.length ? inLibrary : p.platforms).slice(0, 5).join(", "))}${p.platforms.length > 5 && !inLibrary.length ? "…" : ""}</td>
+      <td data-cat-status="${p.key}" title="${esc(update?.error ?? "")}">${esc(status)}</td>
+      <td class="row" style="justify-content:flex-end">${actions}</td></tr>`;
+  });
+  return `<h2 style="margin-top:0">Download emulators</h2>
+    <div class="hint" style="margin-bottom:10px;max-width:820px">The launcher downloads these from their official releases into
+      <code>${esc(c.emulatorDir || "emulators")}</code>, each in its own folder, adds them to the list below and assigns them to your
+      platforms that have no emulator yet. Where an emulator supports it, it is set to keep its settings in its own folder.
+      An update unpacks over the old version: settings and saves in its folder stay. Greyed rows are for platforms your library does not have.</div>
+    <div class="form" style="margin-bottom:10px">
+      <label>Emulator folder</label><div class="row"><input id="e-dir" value="${esc(c.emulatorDir || "emulators")}"><button id="e-dir-browse">Browse…</button><button id="e-check">Check for updates</button></div>
+    </div>
+    <table class="catalog"><tbody>${rows.join("")}</tbody></table>
+    <h2>Your emulators</h2>`;
+}
+
+async function installFromCatalog(key) {
+  const preset = presets.presets.find((p) => p.key === key);
+  emuCatalog.busy.set(key, "Starting…");
+  renderEmulators();
+  try {
+    await api("emulators:install", key, librarySlugs());
+    delete emuCatalog.updates[key];
+    toast(`${preset.name} installed`, "ok");
+  } catch (error) {
+    toast(`${preset.name}: ${error.message}`, "error");
+  } finally {
+    emuCatalog.busy.delete(key);
+    state.config = await api("config:get");
+    if (state.view.kind === "settings" && settingsTab === "emulators") renderEmulators();
+  }
+}
+
+async function catalogClick(e) {
+  const site = e.target.closest("[data-cat-site]")?.dataset.catSite;
+  if (site) return api("open:external", site);
+  const install = e.target.closest("[data-cat-install]")?.dataset.catInstall;
+  if (install) return installFromCatalog(install);
+  const folder = e.target.closest("[data-cat-folder]")?.dataset.catFolder;
+  if (folder) return api("emulators:openFolder", folder);
+  if (e.target.closest("[data-cat-cores]")) {
+    const retro = state.config.emulators.find((x) => x.managed?.key === "retroarch");
+    // The cores of the platforms RetroArch runs here, or that it would run in this library.
+    const mapped = Object.entries(state.config.platforms).filter(([, m]) => m.emulatorId === retro?.id).map(([slug, m]) => m.core || presets.defaultCores[slug]);
+    const preset = presets.presets.find((p) => p.key === "retroarch");
+    const wanted = mapped.length ? mapped : preset.platforms.filter((s) => librarySlugs().includes(s)).map((s) => presets.defaultCores[s]);
+    const cores = [...new Set(wanted.filter(Boolean))];
+    if (!cores.length) return toast("No platform uses RetroArch yet: assign some in Settings → Platforms.", "error");
+    emuCatalog.busy.set("retroarch", "Downloading cores…");
+    renderEmulators();
+    try {
+      const done = await api("emulators:installCores", cores);
+      toast(`Downloaded ${done.length} of ${cores.length} cores: ${done.join(", ")}`, done.length === cores.length ? "ok" : "error");
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      emuCatalog.busy.delete("retroarch");
+      renderEmulators();
+    }
+    return;
+  }
+  if (e.target.id === "e-check") {
+    e.target.disabled = true;
+    e.target.textContent = "Checking…";
+    try {
+      emuCatalog.updates = await api("emulators:checkUpdates");
+      const n = Object.values(emuCatalog.updates).filter((u) => u.version).length;
+      toast(n ? `${n} emulator update${n === 1 ? "" : "s"} available` : "Emulators are up to date", "ok");
+    } catch (error) {
+      toast(error.message, "error");
+    }
+    return renderEmulators();
+  }
+  if (e.target.id === "e-dir-browse") {
+    const dir = await api("dialog:pickFolder");
+    if (dir) { await save({ emulatorDir: dir }, true); renderEmulators(); }
+  }
+}
+
 function renderEmulators() {
   const c = state.config;
-  $("#tab-body").innerHTML = `
+  $("#tab-body").innerHTML = catalogHtml() + `
     <div class="row" style="margin-bottom:14px">
       <select id="e-preset">${presets.presets.map((p) => `<option value="${p.key}">${esc(p.name)}</option>`).join("")}</select>
       <button class="primary" id="e-add">+ Add emulator</button>
@@ -1191,6 +1300,8 @@ function renderEmulators() {
 
   const commit = async () => {
     const emulators = $$(".emu").map((el) => ({
+      // Keep what the form does not show, such as the launcher's install record.
+      ...state.config.emulators.find((x) => x.id === el.dataset.id),
       id: el.dataset.id,
       name: $('[data-f="name"]', el).value.trim() || "Emulator",
       path: $('[data-f="path"]', el).value.trim(),
@@ -1240,6 +1351,12 @@ function renderEmulators() {
     return emu;
   };
 
+  $(".catalog").addEventListener("click", catalogClick);
+  $("#e-check").addEventListener("click", catalogClick);
+  $("#e-dir-browse").addEventListener("click", catalogClick);
+  $("#e-dir").addEventListener("change", async () => {
+    await save({ emulatorDir: $("#e-dir").value.trim() || "emulators" }, true);
+  });
   $("#e-add").addEventListener("click", async () => {
     const preset = presets.presets.find((p) => p.key === $("#e-preset").value);
     const path = preset.key === "retroarch" ? (await api("emulators:detectRetroArch")) ?? "" : "";

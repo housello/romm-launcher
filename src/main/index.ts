@@ -10,6 +10,7 @@ import { getInstalled, listInstalled, metaOf, putInstalled } from "./library";
 import { checkServer, isOffline, isUnreachable, noteFailure, onConnectionChange } from "./connection";
 import { flushSessions } from "./playSessions";
 import { checkForUpdate, cleanUpUpdate, installUpdate, type UpdateInfo } from "./updater";
+import { checkEmulatorUpdates, installCores, installDir, installEmulator } from "./emulatorManager";
 import { lastVersions, rememberVersion } from "./lastVersions";
 import { applyRenames, buildPlan, undoInfo, undoLast } from "./mame";
 import { cancel, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
@@ -406,6 +407,13 @@ function registerIpc(): void {
   handle("running:list", () => runningGames());
 
   handle("emulators:presets", () => ({ presets: PRESETS, defaultCores: DEFAULT_CORES }));
+  const emuProgress = (event: unknown) => {
+    if (win && !win.isDestroyed()) win.webContents.send("emu-progress", event);
+  };
+  handle("emulators:install", (key: string, libraryPlatforms: string[]) => installEmulator(key, Array.isArray(libraryPlatforms) ? libraryPlatforms : [], emuProgress));
+  handle("emulators:checkUpdates", () => checkEmulatorUpdates());
+  handle("emulators:installCores", (cores: string[]) => installCores(Array.isArray(cores) ? cores : [], emuProgress));
+  handle("emulators:openFolder", (key: string) => shell.openPath(installDir(String(key))));
   handle("emulators:detectRetroArch", () => { const p = detectRetroArch(); return p ? toStored(p) : null; });
   handle("emulators:cores", (path: string) => listCores(resolvePath(path)));
   handle("emulators:exists", (path: string) => !!path && existsSync(resolvePath(path)));

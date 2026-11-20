@@ -68,6 +68,27 @@ Build `release/RomM-Launcher.exe` with `npm run package`. `npm run release` also
    (for RetroArch; ★ marks the suggested one), and if needed per-platform arguments and a
    download folder. The filter box and "only platforms without an emulator" help with long lists.
 
+### Downloading emulators
+
+**Settings → Emulators → Download emulators** lists the emulators the launcher can install
+itself, from their official releases: RetroArch, Dolphin, PCSX2, DuckStation, PPSSPP, RPCS3,
+shadPS4, Vita3K, Cemu, Ryujinx (Ryubing), Azahar, melonDS, DeSmuME, mGBA, SameBoy, SkyEmu,
+Gearboy, gopher64, Snes9x, bsnes, Mesen, ares, BizHawk, Gearsystem, Geargrafx, Stella, openMSX,
+Flycast, xemu, Xenia Canary, MAME, FinalBurn Neo, DOSBox Staging and DOSBox-X.
+
+- **Download** puts it in `emulators\<name>\` next to the exe (the folder can be changed there),
+  adds it to your emulators and assigns it to your platforms that have no emulator yet. Where the
+  emulator supports it (Dolphin, PCSX2, DuckStation, Cemu, Ryujinx, Azahar, Xenia), it is set to
+  keep its settings in its own folder.
+- **Check for updates** compares each installed one with its latest release; **Update** unpacks
+  the new version over the old one, so settings and saves in its folder stay. Close the emulator
+  first.
+- **Download cores** (RetroArch) fetches the libretro cores your platforms use from the libretro
+  buildbot.
+
+Zip, 7z and MAME's self-extracting archives are unpacked with Windows' own `tar`, so nothing extra
+ships with the launcher. Emulators installed some other way can still be added by hand below.
+
 Platforms without an emulator show an orange dot in the sidebar. Pressing Play on one
 takes you straight to its row in the Platforms tab.
 

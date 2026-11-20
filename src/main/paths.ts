@@ -103,6 +103,7 @@ function rewritePaths(name: string, text: string, map: PathMap, toLocal: boolean
     }
     data.romDir = fix(data.romDir);
     data.saveDir = fix(data.saveDir);
+    data.emulatorDir = fix(data.emulatorDir);
     for (const emulator of data.emulators ?? []) emulator.path = fix(emulator.path);
     for (const mapping of Object.values(data.platforms ?? {}) as Array<{ folder?: string }>) {
       if (mapping.folder) mapping.folder = fix(mapping.folder) as string;
