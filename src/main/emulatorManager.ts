@@ -10,7 +10,7 @@ import { net } from "electron";
 import { execFile } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
 import { copyFile, cp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
@@ -137,9 +137,72 @@ async function findExe(dir: string, pattern: string, depth = 3): Promise<string 
   return null;
 }
 
-/** Folder an emulator is installed in: <emulator folder>\<key>. */
+/** Settings files an update leaves alone when they exist (e.g. Supermodel's Config\Supermodel.ini). */
+const KEEP_SETTINGS = /\.(ini|cfg|conf)$/i;
+
+/** Folder a catalog emulator is downloaded to: <emulator folder>\<key>. */
 export function installDir(key: string): string {
   return join(resolvePath(loadConfig().emulatorDir || "emulators"), key);
+}
+
+/** The emulator the launcher updates for a catalog key, if any. */
+function managedEntry(key: string): EmulatorDef | undefined {
+  return loadConfig().emulators.find((e) => e.managed?.key === key);
+}
+
+/** Where updates of a catalog emulator go: an adopted emulator's own folder, else installDir. */
+export function managedFolder(key: string): string {
+  const dir = managedEntry(key)?.managed?.dir;
+  return dir ? resolvePath(dir) : installDir(key);
+}
+
+/** The catalog entry an emulator added by hand matches, by its executable's name. */
+export function catalogMatch(emulator: EmulatorDef): (Preset & { source: EmulatorSource }) | undefined {
+  const exe = basename(emulator.path || "");
+  return PRESETS.find((p): p is Preset & { source: EmulatorSource } => !!p.source && !!p.exe && new RegExp(`^${p.exe}$`, "i").test(exe));
+}
+
+/** The version in an executable's file properties, or "" when it has none. */
+async function exeVersion(path: string): Promise<string> {
+  try {
+    const { stdout } = await run("powershell", ["-NoProfile", "-NonInteractive", "-Command",
+      "$v = (Get-Item -LiteralPath $env:EMU_EXE).VersionInfo; if ($v.ProductVersion) { $v.ProductVersion } else { $v.FileVersion }"],
+      { windowsHide: true, timeout: 15_000, env: { ...process.env, EMU_EXE: path } });
+    return stdout.trim().split(/\s/)[0] ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Let the launcher update an emulator added by hand: updates unpack over its own
+ * folder, like the ones it downloaded, so its settings and saves stay.
+ */
+export async function adoptEmulator(id: string): Promise<EmulatorDef> {
+  const config = loadConfig();
+  const emulator = config.emulators.find((e) => e.id === id);
+  if (!emulator) throw new ManagerError("This emulator is no longer in the list.");
+  if (emulator.managed) return emulator;
+  const preset = catalogMatch(emulator);
+  if (!preset) throw new ManagerError(`The launcher cannot download ${emulator.name}, so it cannot update it.`);
+  const other = managedEntry(preset.key);
+  if (other) throw new ManagerError(`The launcher already updates ${preset.name} (“${other.name}”). Let that one go first.`);
+  const exe = resolvePath(emulator.path);
+  if (!existsSync(exe)) throw new ManagerError(`${exe} does not exist.`);
+  const managed = { key: preset.key, version: (await exeVersion(exe)) || "unknown", assetKey: "", installedAt: 0, dir: toStored(dirname(exe)) };
+  const updated = { ...emulator, managed };
+  updateConfig({ emulators: loadConfig().emulators.map((e) => (e.id === id ? updated : e)) });
+  return updated;
+}
+
+/** Stop updating an emulator the launcher adopted; its files stay as they are. */
+export function releaseEmulator(id: string): EmulatorDef {
+  const config = loadConfig();
+  const emulator = config.emulators.find((e) => e.id === id);
+  if (!emulator) throw new ManagerError("This emulator is no longer in the list.");
+  const { managed: _managed, ...rest } = emulator;
+  updateConfig({ emulators: config.emulators.map((e) => (e.id === id ? rest : e)) });
+  return rest;
 }
 
 /**
@@ -150,7 +213,8 @@ export async function installEmulator(key: string, libraryPlatforms: string[], o
   const preset = presetOf(key);
   const release = await latestRelease(key);
   const work = join(dataDir(), "emulator-downloads", `${key}-${Date.now()}`);
-  const target = installDir(key);
+  const adoptedDir = managedEntry(key)?.managed?.dir;
+  const target = managedFolder(key);
   await mkdir(work, { recursive: true });
   try {
     const archive = join(work, release.fileName);
@@ -175,10 +239,14 @@ export async function installEmulator(key: string, libraryPlatforms: string[], o
     await mkdir(target, { recursive: true });
     try {
       if (preset.single) await copyFile(root, join(target, release.fileName));
-      else await cp(root, target, { recursive: true, force: true });
+      // Settings files already there are the user's: an archive's default copy does not replace them.
+      else await cp(root, target, { recursive: true, force: true, filter: (_src, dest) => !(KEEP_SETTINGS.test(dest) && existsSync(dest)) });
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code === "EBUSY" || code === "EPERM") throw new ManagerError(`Close ${preset.name} first: its files are in use.`);
+      if (code === "EBUSY") throw new ManagerError(`Close ${preset.name} first: its files are in use.`);
+      if (code === "EPERM" || code === "EACCES") {
+        throw new ManagerError(`Could not write to ${target}: close ${preset.name} if it is running; a folder like Program Files needs administrator rights.`);
+      }
       throw error;
     }
 
@@ -187,7 +255,7 @@ export async function installEmulator(key: string, libraryPlatforms: string[], o
     if (preset.portable?.file && !existsSync(join(target, preset.portable.file))) await writeFile(join(target, preset.portable.file), "");
     if (preset.portable?.dir) await mkdir(join(target, preset.portable.dir), { recursive: true });
 
-    const managed = { key, version: release.version, assetKey: release.assetKey, installedAt: Date.now() };
+    const managed = { key, version: release.version, assetKey: release.assetKey, installedAt: Date.now(), ...(adoptedDir ? { dir: adoptedDir } : {}) };
     return register(preset, toStored(exe), managed, libraryPlatforms);
   } finally {
     await rm(work, { recursive: true, force: true }).catch(() => undefined);

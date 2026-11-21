@@ -48,6 +48,7 @@ body {
 #menubar a { padding: 3px 12px; border-radius: 6px; cursor: pointer; color: var(--text); text-decoration: none; }
 #menubar a:hover { background: var(--panel-2); }
 #menubar a.active { background: var(--accent); color: #fff; }
+#menubar a.on { color: var(--accent-2); font-weight: 600; }
 #app { flex: 1; display: flex; min-height: 0; }
 [hidden] { display: none !important; }
 .muted { color: var(--muted); }

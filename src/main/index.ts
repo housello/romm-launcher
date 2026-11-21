@@ -10,7 +10,7 @@ import { getInstalled, listInstalled, metaOf, putInstalled } from "./library";
 import { checkServer, isOffline, isUnreachable, noteFailure, onConnectionChange } from "./connection";
 import { flushSessions } from "./playSessions";
 import { checkForUpdate, cleanUpUpdate, installUpdate, type UpdateInfo } from "./updater";
-import { checkEmulatorUpdates, installCores, installDir, installEmulator } from "./emulatorManager";
+import { adoptEmulator, checkEmulatorUpdates, installCores, installEmulator, managedFolder, releaseEmulator } from "./emulatorManager";
 import { lastVersions, rememberVersion } from "./lastVersions";
 import { applyRenames, buildPlan, undoInfo, undoLast } from "./mame";
 import { guessList, listXmlFromExe, mameExes, softwareLists } from "./mameSources";
@@ -46,6 +46,7 @@ function createWindow(): void {
     title: "RomM Launcher",
     icon: join(__dirname, "..", "..", "renderer", "icon.png"),
     autoHideMenuBar: true,
+    fullscreen: !!loadConfig().fullscreen,
     webPreferences: {
       preload: join(__dirname, "..", "preload", "preload.js"),
       contextIsolation: true,
@@ -480,6 +481,11 @@ function registerIpc(): void {
   handle("saves:syncTargets", () => loadConfig().emulators
     .map((e) => ({ id: e.id, name: e.name, folders: syncFoldersOf(e).filter((f) => f.enabled).map((f) => f.name) }))
     .filter((e) => e.folders.length));
+  handle("window:setFullscreen", (on: boolean) => {
+    win?.setFullScreen(!!on);
+    updateConfig({ fullscreen: !!on });
+    return !!on;
+  });
   handle("app:quitNow", () => {
     quitting = true;
     win?.close();
@@ -523,7 +529,9 @@ function registerIpc(): void {
   handle("emulators:install", (key: string, libraryPlatforms: string[]) => installEmulator(key, Array.isArray(libraryPlatforms) ? libraryPlatforms : [], emuProgress));
   handle("emulators:checkUpdates", () => checkEmulatorUpdates());
   handle("emulators:installCores", (cores: string[]) => installCores(Array.isArray(cores) ? cores : [], emuProgress));
-  handle("emulators:openFolder", (key: string) => shell.openPath(installDir(String(key))));
+  handle("emulators:openFolder", (key: string) => shell.openPath(managedFolder(String(key))));
+  handle("emulators:adopt", (id: string) => adoptEmulator(String(id)));
+  handle("emulators:release", (id: string) => releaseEmulator(String(id)));
   handle("emulators:detectRetroArch", () => { const p = detectRetroArch(); return p ? toStored(p) : null; });
   handle("emulators:cores", (path: string) => listCores(resolvePath(path)));
   handle("emulators:open", (id: string) => openEmulator(String(id)));

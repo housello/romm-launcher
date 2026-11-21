@@ -48,6 +48,11 @@ export interface ManagedInstall {
   /** Identifies the downloaded file, so a rebuilt "latest" release counts as new. */
   assetKey: string;
   installedAt: number;
+  /**
+   * The folder updates go into, for an emulator added by hand and then handed to the
+   * launcher; unset for the ones it downloaded (<emulator folder>\<key>).
+   */
+  dir?: string;
 }
 
 export interface PlatformMapping {
@@ -84,6 +89,8 @@ export interface Config {
   sort: string;
   /** The game list as covers or as a details list. */
   viewMode: "grid" | "list";
+  /** The window was full screen when last left that way (F11). */
+  fullscreen?: boolean;
   /**
    * Where a multi-file game's files go: "subfolder" keeps them in a folder named after
    * the game, "flat" puts them straight in the platform's download folder.

@@ -341,6 +341,7 @@ $("#menubar").addEventListener("click", (e) => {
   if (item === "about") openAbout();
   if (item === "user") openSettings("server");
   if (item === "sync") openSyncDialog();
+  if (item === "fullscreen") toggleFullscreen();
 });
 
 function showUpdate(update) {
@@ -755,8 +756,41 @@ document.addEventListener("keydown", (e) => {
     box.focus();
     box.select();
   }
-  if (e.key === "Escape") closeDetail();
+  if (e.key === "F11") {
+    e.preventDefault();
+    toggleFullscreen();
+  }
+  if (e.key === "Escape") {
+    // Esc closes the details first; with nothing open it leaves full screen.
+    if (!$("#detail").hidden) closeDetail();
+    else if (state.fullscreen) toggleFullscreen(false);
+  }
 });
+
+// A click outside the details pane closes it. Clicks on cards open another game
+// instead, and dialogs, toasts and a text selection dragged out of the pane leave it open.
+let pressedInDetail = false;
+document.addEventListener("pointerdown", (e) => {
+  pressedInDetail = !!e.target.closest?.("#detail");
+}, true);
+document.addEventListener("click", (e) => {
+  if ($("#detail").hidden || pressedInDetail) return;
+  const t = e.target;
+  // a button re-rendered by its own click is no longer in the page
+  if (!(t instanceof Element) || !document.contains(t)) return;
+  if (t.closest("#detail, #chooser, #toasts, .card")) return;
+  closeDetail();
+});
+
+/** Full screen on or off (or the other way round); remembered for the next start. */
+async function toggleFullscreen(on) {
+  try {
+    state.fullscreen = await api("window:setFullscreen", typeof on === "boolean" ? on : !state.fullscreen);
+  } catch (error) {
+    toast(error.message, "error");
+  }
+  $("#menu-fullscreen")?.classList.toggle("on", !!state.fullscreen);
+}
 
 // ------------------------------------------------------------------ filters (RomM server-side)
 
@@ -1613,19 +1647,36 @@ function refreshEmuViews() {
   if (state.view.kind === "about") renderAbout();
 }
 
-/** The line under a launcher-installed emulator: version, update, folder. */
+/** The catalog entry the launcher can download that an emulator added by hand matches. */
+function catalogMatch(e) {
+  const exe = (e.path || "").split(/[\\/]/).pop();
+  return presets.presets.find((p) => p.source && p.exe && new RegExp(`^${p.exe}$`, "i").test(exe));
+}
+
+/** The line under an emulator the launcher updates (version, update, folder), or the offer to. */
 function managedLine(e) {
-  if (!e.managed) return "";
+  if (!e.managed) {
+    const preset = catalogMatch(e);
+    if (!preset) return "";
+    const other = state.config.emulators.find((x) => x.managed?.key === preset.key);
+    return `<label>Updates</label><div class="row">
+      <span class="muted">Added by hand: the launcher does not update it.</span>
+      <div class="spacer"></div>
+      <button data-emu-adopt="${esc(e.id)}" ${other ? `disabled title="The launcher already updates ${esc(preset.name)} (“${esc(other.name)}”)"` : `title="Updates download from ${esc(preset.website || "the official release")} and unpack into this emulator's folder; its settings and saves there stay."`}>Let the launcher update it</button></div>`;
+  }
   const key = e.managed.key;
   const busy = emuCatalog.busy.get(key);
   const update = emuCatalog.updates[key];
-  return `<label>Installed by the launcher</label><div class="row">
-    <span>${esc(e.managed.version)}${update?.version ? ` · <b>${esc(update.version)} available</b>` : ""}</span>
+  const adopted = !!e.managed.dir;
+  const version = e.managed.version === "unknown" ? '<span class="muted">version unknown</span>' : esc(e.managed.version);
+  return `<label>${adopted ? "Updated by the launcher" : "Installed by the launcher"}</label><div class="row">
+    <span>${version}${update?.version ? ` · <b>${esc(update.version)} available</b>` : ""}</span>
     <span class="muted" data-emu-status="${key}" ${busy ? "" : "hidden"}>${esc(busy ?? "")}</span>
     <div class="spacer"></div>
     ${busy ? "" : `${update?.version ? `<button class="primary" data-emu-update="${key}">Update</button>` : ""}
       ${key === "retroarch" ? "<button data-emu-cores>Download cores</button>" : ""}
-      <button data-emu-folder="${key}">Open folder</button>`}</div>`;
+      <button data-emu-folder="${key}">Open folder</button>
+      ${adopted ? `<button data-emu-release="${esc(e.id)}" title="Stop updating it; its files stay as they are">Stop updating</button>` : ""}`}</div>`;
 }
 
 /** An emulator card's WebDAV save folders: one checkbox each, and Add folder. */
@@ -1725,6 +1776,22 @@ async function renderEmulators() {
     if (update) return installFromCatalog(update);
     const folder = e.target.closest("[data-emu-folder]")?.dataset.emuFolder;
     if (folder) return api("emulators:openFolder", folder);
+    const adopt = e.target.closest("[data-emu-adopt]")?.dataset.emuAdopt;
+    const release = e.target.closest("[data-emu-release]")?.dataset.emuRelease;
+    if (adopt || release) {
+      try {
+        const emulator = await api(adopt ? "emulators:adopt" : "emulators:release", adopt || release);
+        state.config = await api("config:get");
+        if (adopt) {
+          toast(`The launcher now updates ${emulator.name}`, "ok");
+          // Show right away whether a newer release is out.
+          await checkEmulatorUpdates().catch(() => []);
+        }
+      } catch (error) {
+        toast(error.message, "error");
+      }
+      return refreshEmuViews();
+    }
     if (e.target.closest("[data-emu-cores]")) return downloadCores(state.config.emulators.find((x) => x.id === box.dataset.id));
     if (e.target.closest("[data-sf-add]")) {
       const dir = await api("dialog:pickSaveFolder", box.dataset.id);
@@ -2292,6 +2359,8 @@ function renderPlan() {
 
 (async function boot() {
   state.config = await api("config:get");
+  state.fullscreen = !!state.config.fullscreen;
+  $("#menu-fullscreen").classList.toggle("on", state.fullscreen);
   state.lastVersions = await api("versions:last").catch(() => ({}));
   if (state.config.checkUpdates !== false) void checkUpdates(true);
   renderSyncButton();

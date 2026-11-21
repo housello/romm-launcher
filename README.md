@@ -83,8 +83,13 @@ Flycast, xemu, Xenia Canary, MAME, Supermodel, FinalBurn Neo, DOSBox Staging and
   emulator supports it (Dolphin, PCSX2, DuckStation, Cemu, Ryujinx, Azahar, Xenia), it is set to
   keep its settings in its own folder.
 - Its card shows the installed version, **Open folder**, and **Update** once a newer one is known.
-  An update unpacks over the old version, so settings and saves in its folder stay. Close the
-  emulator first.
+  An update unpacks over the old version, so settings and saves in its folder stay; settings
+  files already there (`.ini`, `.cfg`, `.conf`) are not replaced by the release's defaults. Close
+  the emulator first.
+- **Emulators you added yourself** can be updated too, when the launcher can download them: their
+  card offers **Let the launcher update it**. Updates then unpack into that emulator's own folder
+  (nothing moves to `emulators`), and **Stop updating** hands it back. A folder like Program Files
+  needs administrator rights to write to, so updates there fail.
 - **Download cores** on RetroArch's card fetches the libretro cores your platforms use.
 - **About → Emulator updates** checks all of them at once.
 
@@ -121,6 +126,10 @@ with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers
   the launcher's own detail panel, not the RomM web page.
 - **Sidebar**: Home, All games, Downloaded and Collections stay in place; only the platform
   list scrolls.
+- **Detail panel**: clicking a game opens it; a click anywhere outside it (or Esc) closes it,
+  and clicking another game shows that one instead.
+- **Full screen**: F11 or *⛶ Full screen* in the menu bar; Esc leaves it. The launcher starts
+  the way you left it.
 - **⚙ Open emulator** in a game's detail panel starts its emulator with no game, to check or
   change the emulator's own settings.
 - **Play** downloads the game if needed (with progress), then starts the emulator.
