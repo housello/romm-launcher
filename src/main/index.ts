@@ -540,7 +540,7 @@ function registerIpc(): void {
   handle("emulators:cores", (path: string) => listCores(resolvePath(path)));
   handle("emulators:open", (id: string) => openEmulator(String(id)));
   handle("emulators:exists", (path: string) => !!path && existsSync(resolvePath(path)));
-  handle("app:info", () => ({ version: app.getVersion(), project: "https://github.com/stemarinacciowork-dev/romm-launcher" }));
+  handle("app:info", () => ({ version: app.getVersion(), project: "https://github.com/housello/romm-launcher" }));
   handle("app:paths",() => ({ portable: isPortable(), baseDir: baseDir(), dataDir: dataDir(), canSwitch: canSwitchLocation(), ...dataLocations() }));
   handle("app:setDataLocation", (toLocal: boolean) => switchDataLocation(!!toLocal));
 

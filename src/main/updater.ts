@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { extractZipEntry } from "./zip";
 
-const LATEST_RELEASE = "https://api.github.com/repos/stemarinacciowork-dev/romm-launcher/releases/latest";
+const LATEST_RELEASE = "https://api.github.com/repos/housello/romm-launcher/releases/latest";
 const ASSET_RE = /^RomM-Launcher-(\d+\.\d+\.\d+)\.zip$/;
 const EXE = "RomM-Launcher.exe";
 
