@@ -481,6 +481,8 @@ function registerIpc(): void {
   handle("saves:syncTargets", () => loadConfig().emulators
     .map((e) => ({ id: e.id, name: e.name, folders: syncFoldersOf(e).filter((f) => f.enabled).map((f) => f.name) }))
     .filter((e) => e.folders.length));
+  // The normal close: the save sync before closing still runs, and full screen stays remembered.
+  handle("window:close", () => { win?.close(); return true; });
   handle("window:setFullscreen", (on: boolean) => {
     win?.setFullScreen(!!on);
     updateConfig({ fullscreen: !!on });

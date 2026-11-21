@@ -49,6 +49,7 @@ body {
 #menubar a:hover { background: var(--panel-2); }
 #menubar a.active { background: var(--accent); color: #fff; }
 #menubar a.on { color: var(--accent-2); font-weight: 600; }
+#menubar #menu-quit:hover { background: var(--danger); color: #fff; }
 #app { flex: 1; display: flex; min-height: 0; }
 [hidden] { display: none !important; }
 .muted { color: var(--muted); }

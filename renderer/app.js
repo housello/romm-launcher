@@ -342,6 +342,7 @@ $("#menubar").addEventListener("click", (e) => {
   if (item === "user") openSettings("server");
   if (item === "sync") openSyncDialog();
   if (item === "fullscreen") toggleFullscreen();
+  if (item === "quit") api("window:close");
 });
 
 function showUpdate(update) {
@@ -789,7 +790,14 @@ async function toggleFullscreen(on) {
   } catch (error) {
     toast(error.message, "error");
   }
+  showFullscreenState();
+}
+
+/** The menu item marked, and the Exit button that full screen needs (it has no title bar). */
+function showFullscreenState() {
   $("#menu-fullscreen")?.classList.toggle("on", !!state.fullscreen);
+  const quit = $("#menu-quit");
+  if (quit) quit.hidden = !state.fullscreen;
 }
 
 // ------------------------------------------------------------------ filters (RomM server-side)
@@ -2365,7 +2373,7 @@ function renderPlan() {
 (async function boot() {
   state.config = await api("config:get");
   state.fullscreen = !!state.config.fullscreen;
-  $("#menu-fullscreen").classList.toggle("on", state.fullscreen);
+  showFullscreenState();
   state.lastVersions = await api("versions:last").catch(() => ({}));
   if (state.config.checkUpdates !== false) void checkUpdates(true);
   renderSyncButton();

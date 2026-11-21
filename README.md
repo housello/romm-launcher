@@ -128,7 +128,7 @@ with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers
   list scrolls.
 - **Detail panel**: clicking a game opens it; a click anywhere outside it (or Esc) closes it,
   and clicking another game shows that one instead.
-- **Full screen**: F11 or *⛶ Full screen* in the menu bar; Esc leaves it. The launcher starts
+- **Full screen**: F11 or *⛶ Full screen* in the menu bar; Esc leaves it. In full screen, *✕ Exit* (top right) closes the launcher, which starts
   the way you left it.
 - **⚙ Open emulator** in a game's detail panel starts its emulator with no game, to check or
   change the emulator's own settings.
