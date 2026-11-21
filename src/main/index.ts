@@ -14,7 +14,7 @@ import { adoptEmulator, checkEmulatorUpdates, installCores, installEmulator, man
 import { lastVersions, rememberVersion } from "./lastVersions";
 import { applyRenames, buildPlan, undoInfo, undoLast } from "./mame";
 import { guessList, listXmlFromExe, mameExes, softwareLists } from "./mameSources";
-import { syncFoldersOf, localPathOf, storedFolderPath, webdavClient } from "./folderSync";
+import { presetOf, syncFoldersOf, localPathOf, storedFolderPath, webdavClient } from "./folderSync";
 import { cancel, openEmulator, resolveConflicts, syncAllFolders, webdavSyncOn, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
 
 // Test data folder: ROMM_LAUNCHER_DATA keeps settings elsewhere. The packaged launcher keeps
@@ -490,7 +490,11 @@ function registerIpc(): void {
     quitting = true;
     win?.close();
   });
-  handle("saves:folders", () => Object.fromEntries(loadConfig().emulators.map((e) => [e.id, syncFoldersOf(e).map((f) => ({ ...f, local: localPathOf(e, f), exists: existsSync(localPathOf(e, f)) }))])));
+  // custom: added by hand (not one of the catalog defaults), so it can be removed again.
+  handle("saves:folders", () => Object.fromEntries(loadConfig().emulators.map((e) => {
+    const defaults = new Set((presetOf(e)?.saveFolders ?? []).map((d) => d.name));
+    return [e.id, syncFoldersOf(e).map((f) => ({ ...f, local: localPathOf(e, f), exists: existsSync(localPathOf(e, f)), custom: !defaults.has(f.name) }))];
+  })));
   handle("saves:testWebdav", async () => {
     const { dav, base } = webdavClient();
     await dav.check(base);

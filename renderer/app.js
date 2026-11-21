@@ -1683,8 +1683,9 @@ function managedLine(e) {
 function syncFoldersHtml(e, folders) {
   const list = folders?.[e.id] ?? [];
   return `<label>Synced save folders</label><div class="sync-folders">
-    ${list.length ? list.map((f, i) => `<label title="${esc(f.local)}"><input type="checkbox" data-sf="${i}" ${f.enabled ? "checked" : ""}>
-      <b>${esc(f.name)}</b> <span class="muted">${esc(f.local)}${f.exists ? "" : " — not there yet"}</span></label>`).join("")
+    ${list.length ? list.map((f, i) => `<div class="sf-row"><label title="${esc(f.local)}"><input type="checkbox" data-sf="${i}" ${f.enabled ? "checked" : ""}>
+      <b>${esc(f.name)}</b> <span class="muted">${esc(f.local)}${f.exists ? "" : " — not there yet"}</span></label>
+      ${f.custom ? `<button class="sf-del" data-sf-del="${i}" title="Remove this folder from the list (no files are deleted)">✕</button>` : ""}</div>`).join("")
       : '<div class="muted">None known for this emulator; add the folder where it keeps saves.</div>'}
     <button data-sf-add>Add folder…</button></div>`;
 }
@@ -1793,6 +1794,10 @@ async function renderEmulators() {
       return refreshEmuViews();
     }
     if (e.target.closest("[data-emu-cores]")) return downloadCores(state.config.emulators.find((x) => x.id === box.dataset.id));
+    const del = e.target.closest("[data-sf-del]")?.dataset.sfDel;
+    if (del !== undefined) {
+      return saveFolders(box.dataset.id, (folders?.[box.dataset.id] ?? []).filter((_f, i) => i !== Number(del)));
+    }
     if (e.target.closest("[data-sf-add]")) {
       const dir = await api("dialog:pickSaveFolder", box.dataset.id);
       if (!dir) return;

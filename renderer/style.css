@@ -286,7 +286,10 @@ table.platforms td .row button { padding: 7px 9px; }
 #chooser .conflict { padding: 8px 10px; border-bottom: 1px solid var(--line); }
 #chooser .conflict label { display: block; margin-top: 3px; font-size: 13px; cursor: pointer; }
 #chooser .conflict .lbl { font-weight: 600; }
-.sync-folders label { display: block; margin-bottom: 3px; cursor: pointer; }
+.sync-folders .sf-row { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+.sync-folders label { display: block; cursor: pointer; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.sync-folders .sf-del { margin: 0; padding: 0 8px; background: transparent; border: 0; color: var(--muted); font-size: 14px; }
+.sync-folders .sf-del:hover { color: var(--danger); }
 .sync-folders button { margin-top: 4px; }
 
 /* Shown while the save folders sync before the window closes. */
