@@ -78,6 +78,14 @@ RPCS3, shadPS4, Vita3K, Cemu, Ryujinx (Ryubing), Azahar, melonDS, DeSmuME, mGBA,
 Gearboy, gopher64, Snes9x, bsnes, Mesen, ares, BizHawk, Gearsystem, Geargrafx, Stella, openMSX,
 Flycast, xemu, Xenia Canary, MAME, Supermodel, FinalBurn Neo, DOSBox Staging and DOSBox-X.
 
+**Nightly and preview builds** are listed as separate emulators, right after the stable one, and
+install into their own folder (`emulators\retroarch-nightly\`…), so both can be used side by side:
+RetroArch (Nightly, from the libretro buildbot), Dolphin (Development), PCSX2 (Nightly),
+DuckStation (Preview), shadPS4 (Nightly), Ryujinx/Ryubing (Canary), Azahar (Pre-release),
+bsnes (Nightly) and xemu (Nightly). Each updates on its own channel. **Download cores** works for
+either RetroArch and puts the cores in that RetroArch's `cores` folder. An emulator you added
+yourself that has such a channel offers both: **Update with releases** or **Update with nightly builds**.
+
 - A download goes to `emulators\<name>\` next to the exe (Settings → Storage changes the folder),
   is added to your emulators and assigned to your platforms that have no emulator yet. Where the
   emulator supports it (Dolphin, PCSX2, DuckStation, Cemu, Ryujinx, Azahar, Xenia), it is set to
@@ -111,7 +119,10 @@ switches with it), **Light** or **Dark**. It applies immediately, including scro
 | `{romFile}` | file name with extension |
 | `{romName}` | file name without extension |
 | `{emuDir}` | folder of the emulator executable |
-| `{core}` | core set for the platform (RetroArch: `-L "{emuDir}\cores\{core}_libretro.dll" "{rom}"`) |
+| `{core}` | core set for the platform, or chosen with *Play with…* (RetroArch: `-L "{emuDir}\cores\{core}_libretro.dll" "{rom}"`) |
+| `{saveDir}` | the launcher's save folder for the game (RomM save sync); in save/state file patterns only, which also take `*` as a wildcard |
+
+The same list is under **Placeholders** below the arguments in Settings → Emulators and in Settings → Platforms.
 
 Arguments are split like a Windows command line and substituted per argument, so paths
 with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers also work.

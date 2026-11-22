@@ -544,9 +544,9 @@ function registerIpc(): void {
   };
   handle("emulators:install", (key: string, libraryPlatforms: string[]) => installEmulator(key, Array.isArray(libraryPlatforms) ? libraryPlatforms : [], emuProgress));
   handle("emulators:checkUpdates", () => checkEmulatorUpdates());
-  handle("emulators:installCores", (cores: string[]) => installCores(Array.isArray(cores) ? cores : [], emuProgress));
+  handle("emulators:installCores", (cores: string[], emulatorId?: string) => installCores(Array.isArray(cores) ? cores : [], emuProgress, typeof emulatorId === "string" ? emulatorId : undefined));
   handle("emulators:openFolder", (key: string) => shell.openPath(managedFolder(String(key))));
-  handle("emulators:adopt", (id: string) => adoptEmulator(String(id)));
+  handle("emulators:adopt", (id: string, channelKey?: string) => adoptEmulator(String(id), typeof channelKey === "string" ? channelKey : undefined));
   handle("emulators:release", (id: string) => releaseEmulator(String(id)));
   handle("emulators:detectRetroArch", () => { const p = detectRetroArch(); return p ? toStored(p) : null; });
   handle("emulators:cores", (path: string) => listCores(resolvePath(path)));

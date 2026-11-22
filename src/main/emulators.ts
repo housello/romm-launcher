@@ -6,14 +6,17 @@ import type { EmulatorDef } from "./config";
 
 /** Where the launcher downloads an emulator from (see emulatorManager.ts). */
 export type EmulatorSource =
-  /** The latest GitHub release's asset matching `asset` (a regular expression). */
-  | { kind: "github"; repo: string; asset: string }
+  /**
+   * The latest GitHub release's asset matching `asset` (a regular expression). With
+   * `prerelease`, the newest release of all, pre-releases included (nightly/preview builds).
+   */
+  | { kind: "github"; repo: string; asset: string; prerelease?: boolean }
   /** The same on a Forgejo/Gitea server. */
   | { kind: "forgejo"; base: string; repo: string; asset: string }
-  /** Dolphin's own update feed. */
-  | { kind: "dolphin" }
-  /** The newest stable RetroArch on the libretro buildbot. */
-  | { kind: "retroarch" };
+  /** Dolphin's own update feed: "beta" releases, or "dev" for every development build. */
+  | { kind: "dolphin"; track?: "beta" | "dev" }
+  /** RetroArch from the libretro buildbot: the newest stable, or the nightly build. */
+  | { kind: "retroarch"; nightly?: boolean };
 
 export interface Preset {
   key: string;
@@ -30,6 +33,12 @@ export interface Preset {
   website?: string;
   /** Downloadable by the launcher. */
   source?: EmulatorSource;
+  /**
+   * For a nightly/preview build: the stable entry's key and the channel's name. It is a
+   * separate emulator, installed in its own folder next to the stable one.
+   */
+  base?: string;
+  channel?: string;
   /** The download is the executable itself, not an archive. */
   single?: boolean;
   /** Created next to the executable so the emulator keeps its settings in its own folder. */
@@ -158,7 +167,32 @@ export const PRESETS: Preset[] = [
   { key: "custom", name: "Custom", exe: "", args: '"{rom}"', extractZip: false, platforms: [] },
 ];
 
-for (const preset of PRESETS) preset.saveFolders = SAVE_FOLDERS[preset.key];
+/**
+ * Nightly and preview builds, checked against each project's releases: only those that
+ * publish Windows builds newer than their stable release. Each becomes its own catalog
+ * entry right after the stable one.
+ */
+const NIGHTLIES: Array<{ base: string; channel: string; source: EmulatorSource; website?: string }> = [
+  { base: "retroarch", channel: "Nightly", source: { kind: "retroarch", nightly: true } },
+  { base: "dolphin", channel: "Development", source: { kind: "dolphin", track: "dev" } },
+  { base: "pcsx2", channel: "Nightly", source: { kind: "github", repo: "PCSX2/pcsx2", asset: "windows-x64-Qt\\.7z$", prerelease: true } },
+  { base: "duckstation", channel: "Preview", source: { kind: "github", repo: "stenzek/duckstation", asset: "^duckstation-windows-x64-release\\.zip$", prerelease: true } },
+  { base: "shadps4", channel: "Nightly", source: { kind: "github", repo: "shadps4-emu/shadPS4", asset: "win64-sdl.*\\.zip$", prerelease: true } },
+  { base: "ryujinx", channel: "Canary", source: { kind: "forgejo", base: "https://git.ryujinx.app", repo: "Ryubing/Canary", asset: "win_x64\\.zip$" } },
+  { base: "azahar", channel: "Pre-release", source: { kind: "github", repo: "azahar-emu/azahar", asset: "^azahar-windows-msvc-[\\d.]+(-rc\\d+)?\\.zip$", prerelease: true } },
+  { base: "bsnes", channel: "Nightly", source: { kind: "github", repo: "bsnes-emu/bsnes", asset: "windows\\.zip$", prerelease: true } },
+  { base: "xemu", channel: "Nightly", source: { kind: "github", repo: "xemu-project/xemu", asset: "^xemu-[\\d.]+-\\d+-g[0-9a-f]+-windows-x86_64\\.zip$", prerelease: true } },
+];
+for (const n of NIGHTLIES) {
+  const at = PRESETS.findIndex((p) => p.key === n.base);
+  const stable = PRESETS[at]!;
+  PRESETS.splice(at + 1, 0, { ...stable, key: `${n.base}-${n.channel.toLowerCase()}`, name: `${stable.name} (${n.channel})`, base: n.base, channel: n.channel, source: n.source, website: n.website ?? stable.website });
+}
+
+for (const preset of PRESETS) preset.saveFolders = SAVE_FOLDERS[preset.base ?? preset.key];
+
+/** RetroArch, stable or nightly: libretro cores, and the {core} placeholder's default cores. */
+export const isRetroArchKey = (key: string | undefined) => key === "retroarch" || PRESETS.some((p) => p.key === key && p.base === "retroarch");
 
 /** Suggested libretro core per RomM platform slug. */
 export const DEFAULT_CORES: Record<string, string> = {

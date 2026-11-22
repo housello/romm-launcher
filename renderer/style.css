@@ -308,3 +308,10 @@ table.platforms td .row button { padding: 7px 9px; }
 .row-scroll::-webkit-scrollbar { height: 8px; }
 .row-scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
 .card .sub.reason { color: var(--accent-2); }
+
+/* placeholder list under the emulator/platform arguments */
+details.placeholders summary { cursor: pointer; color: var(--accent-2); font-size: 13px; }
+details.placeholders table { border-collapse: collapse; margin: 6px 0; font-size: 13px; }
+details.placeholders td { padding: 3px 12px 3px 0; vertical-align: top; }
+details.placeholders td:first-child { white-space: nowrap; }
+details.placeholders .hint { margin-top: 2px; }

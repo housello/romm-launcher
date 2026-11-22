@@ -1724,15 +1724,16 @@ function wantedCores(retroarch) {
 async function downloadCores(retroarch) {
   const cores = wantedCores(retroarch);
   if (!cores.length) return toast("No platform uses RetroArch yet: assign some in Settings → Platforms.", "error");
-  emuCatalog.busy.set("retroarch", "Downloading cores…");
+  const busyKey = retroarch.managed?.key ?? "retroarch";
+  emuCatalog.busy.set(busyKey, "Downloading cores…");
   refreshEmuViews();
   try {
-    const done = await api("emulators:installCores", cores);
+    const done = await api("emulators:installCores", cores, retroarch.id);
     toast(`Downloaded ${done.length} of ${cores.length} cores: ${done.join(", ")}`, done.length === cores.length ? "ok" : "error");
   } catch (error) {
     toast(error.message, "error");
   } finally {
-    emuCatalog.busy.delete("retroarch");
+    emuCatalog.busy.delete(busyKey);
     refreshEmuViews();
   }
 }
@@ -1743,7 +1744,30 @@ function refreshEmuViews() {
   if (state.view.kind === "about") renderAbout();
 }
 
-/** The catalog entry the launcher can download that an emulator added by hand matches. */
+/** Every placeholder the launcher fills in, for the emulator and platform settings. */
+const PLACEHOLDERS = [
+  ["{rom}", "Full path of the game file to launch", "C:\\Games\\roms\\snes\\Chrono Trigger (USA).sfc"],
+  ["{romDir}", "Folder of the game file", "C:\\Games\\roms\\snes"],
+  ["{romFile}", "Game file name with extension", "Chrono Trigger (USA).sfc"],
+  ["{romName}", "Game file name without extension", "Chrono Trigger (USA)"],
+  ["{emuDir}", "Folder of the emulator's executable", "C:\\Emulators\\retroarch"],
+  ["{core}", "Libretro core set for the platform (or chosen with Play with…); arguments only", "snes9x"],
+  ["{saveDir}", "The launcher's save folder for the game (RomM save sync); save/state patterns only", "…\\saves\\snes\\1234"],
+];
+
+/** The placeholder list, folded away under a "Placeholders" line. */
+function placeholderHelp() {
+  return `<details class="placeholders"><summary>Placeholders</summary>
+    <table>${PLACEHOLDERS.map(([name, what, example]) => `<tr><td><code>${esc(name)}</code></td><td>${esc(what)}<div class="hint">e.g. ${esc(example)}</div></td></tr>`).join("")}</table>
+    <div class="hint">Arguments are split like a Windows command line and each placeholder is replaced inside its argument, so quote paths that may contain spaces: <code>"{rom}"</code>.
+      Example for RetroArch: <code>-L "{emuDir}\\cores\\{core}_libretro.dll" "{rom}"</code>. Save/state file patterns also take <code>*</code> as a wildcard, e.g. <code>{romDir}/{romName}.ss*</code>.</div>
+  </details>`;
+}
+
+/** RetroArch's catalog entry, stable or nightly (libretro cores, default cores per platform). */
+const isRetroArch = (key) => key === "retroarch" || presets?.presets.some((p) => p.key === key && p.base === "retroarch");
+
+/** The catalog entry the launcher can download that an emulator added by hand matches (its stable channel). */
 function catalogMatch(e) {
   const exe = (e.path || "").split(/[\\/]/).pop();
   return presets.presets.find((p) => p.source && p.exe && new RegExp(`^${p.exe}$`, "i").test(exe));
@@ -1754,11 +1778,17 @@ function managedLine(e) {
   if (!e.managed) {
     const preset = catalogMatch(e);
     if (!preset) return "";
-    const other = state.config.emulators.find((x) => x.managed?.key === preset.key);
+    // The stable channel, plus nightly/preview ones where the emulator has them.
+    const channels = [preset, ...presets.presets.filter((p) => p.base === preset.key && p.source)];
+    const button = (p) => {
+      const other = state.config.emulators.find((x) => x.managed?.key === p.key);
+      const label = channels.length > 1 ? `Update with ${p.channel ? p.channel.toLowerCase() + " builds" : "releases"}` : "Let the launcher update it";
+      return `<button data-emu-adopt="${esc(e.id)}" data-channel="${esc(p.key)}" ${other ? `disabled title="The launcher already updates ${esc(p.name)} (“${esc(other.name)}”)"` : `title="Updates download ${p.channel ? `${esc(p.channel.toLowerCase())} builds` : "releases"} from ${esc(p.website || "the official site")} and unpack into this emulator's folder; its settings and saves there stay."`}>${label}</button>`;
+    };
     return `<label>Updates</label><div class="row">
       <span class="muted">Added by hand: the launcher does not update it.</span>
       <div class="spacer"></div>
-      <button data-emu-adopt="${esc(e.id)}" ${other ? `disabled title="The launcher already updates ${esc(preset.name)} (“${esc(other.name)}”)"` : `title="Updates download from ${esc(preset.website || "the official release")} and unpack into this emulator's folder; its settings and saves there stay."`}>Let the launcher update it</button></div>`;
+      ${channels.map(button).join("")}</div>`;
   }
   const key = e.managed.key;
   const busy = emuCatalog.busy.get(key);
@@ -1770,7 +1800,7 @@ function managedLine(e) {
     <span class="muted" data-emu-status="${key}" ${busy ? "" : "hidden"}>${esc(busy ?? "")}</span>
     <div class="spacer"></div>
     ${busy ? "" : `${update?.version ? `<button class="primary" data-emu-update="${key}">Update</button>` : ""}
-      ${key === "retroarch" ? "<button data-emu-cores>Download cores</button>" : ""}
+      ${isRetroArch(key) ? "<button data-emu-cores>Download cores</button>" : ""}
       <button data-emu-folder="${key}">Open folder</button>
       ${adopted ? `<button data-emu-release="${esc(e.id)}" title="Stop updating it; its files stay as they are">Stop updating</button>` : ""}`}</div>`;
 }
@@ -1811,6 +1841,7 @@ async function renderEmulators() {
         ${managedLine(e)}
         <label>Executable</label><div class="row"><input data-f="path" value="${esc(e.path)}"><button data-browse>Browse…</button></div>
         <label>Arguments</label><input data-f="args" value="${esc(e.args)}">
+        <label></label>${placeholderHelp()}
         <label></label><label><input type="checkbox" data-f="extractZip" ${e.extractZip ? "checked" : ""}> Extract .zip games before launching</label>
         ${webdav ? syncFoldersHtml(e, folders) : ""}
         <label ${webdav ? "hidden" : ""}>Save sync</label>
@@ -1877,7 +1908,9 @@ async function renderEmulators() {
     const release = e.target.closest("[data-emu-release]")?.dataset.emuRelease;
     if (adopt || release) {
       try {
-        const emulator = await api(adopt ? "emulators:adopt" : "emulators:release", adopt || release);
+        const emulator = adopt
+          ? await api("emulators:adopt", adopt, e.target.closest("[data-emu-adopt]").dataset.channel)
+          : await api("emulators:release", release);
         state.config = await api("config:get");
         if (adopt) {
           toast(`The launcher now updates ${emulator.name}`, "ok");
@@ -1911,7 +1944,7 @@ async function renderEmulators() {
     // Map this emulator to its usual platforms that have no emulator yet.
     for (const slug of preset.platforms) {
       if (!platforms[slug] && state.platforms.some((p) => p.slug === slug || p.fsSlug === slug)) {
-        platforms[slug] = { emulatorId: emu.id, core: preset.key === "retroarch" ? presets.defaultCores[slug] : undefined };
+        platforms[slug] = { emulatorId: emu.id, core: isRetroArch(preset.key) ? presets.defaultCores[slug] : undefined };
       }
     }
     await save({ emulators: [...state.config.emulators, emu], platforms }, true);
@@ -1981,6 +2014,7 @@ async function renderPlatforms(focusSlug) {
       Arguments override the emulator's default for this platform only. Download folder: where this platform's games are saved,
       as <code>folder${sep}rom.ext</code>; leave empty for <code>${esc(c.romDir)}${sep}&lt;slug&gt;</code>. Point it at an existing ROM
       folder and games already there are used without downloading.</div>
+    <div style="margin:-4px 0 12px;max-width:900px">${placeholderHelp()}</div>
     <table class="platforms">
       <thead><tr><th style="width:20%">Platform</th><th style="width:16%">Emulator</th><th style="width:17%">Core</th><th style="width:17%">Arguments override</th><th>Download folder</th></tr></thead>
       <tbody>${state.platforms.map((p) => {

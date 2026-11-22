@@ -15,7 +15,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { loadConfig, updateConfig, type EmulatorDef } from "./config";
-import { DEFAULT_CORES, PRESETS, type EmulatorSource, type Preset } from "./emulators";
+import { DEFAULT_CORES, PRESETS, isRetroArchKey, type EmulatorSource, type Preset } from "./emulators";
 import { dataDir, resolvePath, toStored } from "./paths";
 
 const run = promisify(execFile);
@@ -52,7 +52,8 @@ async function getJson<T>(url: string): Promise<T> {
 
 /** A tag like "latest" or "continuous", or a commit hash, says nothing: use the build date. */
 function displayVersion(tag: string, date: string | undefined): string {
-  if (/^(latest|continuous|nightly)$/i.test(tag) || /^(build-)?[0-9a-f]{7,40}$/i.test(tag)) {
+  // Also "preview", "pre-release", and tags carrying a commit hash ("Pre-release-shadPS4-2026-11-20-bf08ce9c…").
+  if (/^(latest|continuous|nightly|preview|pre-?release)$/i.test(tag) || /^(build-)?[0-9a-f]{7,40}$/i.test(tag) || /[0-9a-f]{40}/i.test(tag)) {
     return date ? date.slice(0, 10) : tag;
   }
   // mame0289 → 0.289; release_0_9_13 → 0.9.13; dosbox-x-v2026.10.01 → 2026.10.01.
@@ -68,11 +69,12 @@ function displayVersion(tag: string, date: string | undefined): string {
 export async function latestRelease(key: string): Promise<Release> {
   const { source } = presetOf(key);
   if (source.kind === "github" || source.kind === "forgejo") {
+    // Nightly/preview channels: the newest release of all, pre-releases included.
     const url = source.kind === "github"
-      ? `https://api.github.com/repos/${source.repo}/releases/latest`
+      ? source.prerelease ? `https://api.github.com/repos/${source.repo}/releases?per_page=10` : `https://api.github.com/repos/${source.repo}/releases/latest`
       : `${source.base}/api/v1/repos/${source.repo}/releases?limit=1`;
     const body = await getJson<any>(url);
-    const release = Array.isArray(body) ? body[0] : body;
+    const release = Array.isArray(body) ? body.find((r: any) => !r.draft) : body;
     const re = new RegExp(source.asset, "i");
     const asset = (release?.assets ?? []).find((a: any) => re.test(a.name));
     if (!asset) throw new ManagerError(`The latest ${key} release has no Windows download the launcher recognises.`);
@@ -85,10 +87,19 @@ export async function latestRelease(key: string): Promise<Release> {
     };
   }
   if (source.kind === "dolphin") {
-    const feed = await getJson<{ shortrev: string; artifacts?: Array<{ system: string; url: string }> }>("https://dolphin-emu.org/update/latest/beta/");
+    const feed = await getJson<{ shortrev: string; artifacts?: Array<{ system: string; url: string }> }>(`https://dolphin-emu.org/update/latest/${source.track ?? "beta"}/`);
     const artifact = feed.artifacts?.find((a) => /^windows x64/i.test(a.system));
     if (!artifact) throw new ManagerError("Dolphin's update feed has no Windows x64 build.");
     return { version: feed.shortrev, assetKey: artifact.url, url: artifact.url, fileName: basename(new URL(artifact.url).pathname), size: 0 };
+  }
+  // RetroArch nightly: one file the buildbot rebuilds every day; its date tells builds apart.
+  if (source.nightly) {
+    const url = "https://buildbot.libretro.com/nightly/windows/x86_64/RetroArch.7z";
+    const head = await net.fetch(url, { method: "HEAD", headers: UA });
+    if (!head.ok) throw new ManagerError(`buildbot.libretro.com answered HTTP ${head.status}`);
+    const modified = head.headers.get("last-modified");
+    const built = modified ? new Date(modified).toISOString().slice(0, 10) : "nightly";
+    return { version: built, assetKey: `${url}@${modified ?? ""}`, url, fileName: "RetroArch.7z", size: Number(head.headers.get("content-length") ?? 0) };
   }
   // RetroArch: the highest version listed on the buildbot's stable folder.
   const response = await net.fetch("https://buildbot.libretro.com/stable/", { headers: UA });
@@ -178,13 +189,15 @@ async function exeVersion(path: string): Promise<string> {
  * Let the launcher update an emulator added by hand: updates unpack over its own
  * folder, like the ones it downloaded, so its settings and saves stay.
  */
-export async function adoptEmulator(id: string): Promise<EmulatorDef> {
+export async function adoptEmulator(id: string, channelKey?: string): Promise<EmulatorDef> {
   const config = loadConfig();
   const emulator = config.emulators.find((e) => e.id === id);
   if (!emulator) throw new ManagerError("This emulator is no longer in the list.");
   if (emulator.managed) return emulator;
-  const preset = catalogMatch(emulator);
-  if (!preset) throw new ManagerError(`The launcher cannot download ${emulator.name}, so it cannot update it.`);
+  const stable = catalogMatch(emulator);
+  if (!stable) throw new ManagerError(`The launcher cannot download ${emulator.name}, so it cannot update it.`);
+  // Nightly/preview channel of the same emulator, when asked for.
+  const preset = (channelKey && PRESETS.find((p): p is Preset & { source: EmulatorSource } => p.key === channelKey && p.base === stable.key && !!p.source)) || stable;
   const other = managedEntry(preset.key);
   if (other) throw new ManagerError(`The launcher already updates ${preset.name} (“${other.name}”). Let that one go first.`);
   const exe = resolvePath(emulator.path);
@@ -285,7 +298,7 @@ function register(preset: Preset, path: string, managed: NonNullable<EmulatorDef
   const platforms = { ...config.platforms };
   for (const slug of preset.platforms) {
     if (!platforms[slug] && libraryPlatforms.includes(slug)) {
-      platforms[slug] = { emulatorId: emulator.id, core: preset.key === "retroarch" ? DEFAULT_CORES[slug] : undefined };
+      platforms[slug] = { emulatorId: emulator.id, core: isRetroArchKey(preset.key) ? DEFAULT_CORES[slug] : undefined };
     }
   }
   updateConfig({ emulators: [...config.emulators, emulator], platforms });
@@ -307,10 +320,12 @@ export async function checkEmulatorUpdates(): Promise<Record<string, { version: 
   return out;
 }
 
-/** Download libretro cores into a RetroArch the launcher installed (or the one given). */
-export async function installCores(cores: string[], onProgress: Progress): Promise<string[]> {
-  const retroarch = loadConfig().emulators.find((e) => e.managed?.key === "retroarch")
-    ?? loadConfig().emulators.find((e) => /retroarch\.exe$/i.test(e.path));
+/** Download libretro cores into the given RetroArch (stable or nightly), else the first one there is. */
+export async function installCores(cores: string[], onProgress: Progress, emulatorId?: string): Promise<string[]> {
+  const emulators = loadConfig().emulators;
+  const retroarch = emulators.find((e) => e.id === emulatorId)
+    ?? emulators.find((e) => e.managed?.key === "retroarch")
+    ?? emulators.find((e) => /retroarch\.exe$/i.test(e.path));
   if (!retroarch) throw new ManagerError("Install RetroArch first.");
   const coresDir = join(resolvePath(retroarch.path), "..", "cores");
   await mkdir(coresDir, { recursive: true });
@@ -320,7 +335,7 @@ export async function installCores(cores: string[], onProgress: Progress): Promi
   try {
     for (const [i, core] of [...new Set(cores)].entries()) {
       if (!/^[\w-]+$/.test(core)) continue;
-      onProgress({ key: "retroarch", label: `Core ${core} (${i + 1}/${cores.length})`, received: i, total: cores.length });
+      onProgress({ key: retroarch.managed?.key ?? "retroarch", label: `Core ${core} (${i + 1}/${cores.length})`, received: i, total: cores.length });
       const archive = join(work, `${core}.zip`);
       try {
         await download(CORE_URL(core), archive, () => undefined);
