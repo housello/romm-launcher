@@ -3,6 +3,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import type { EmulatorDef } from "./config";
+import { baseDir, dataDir } from "./paths";
 
 /** Where the launcher downloads an emulator from (see emulatorManager.ts). */
 export type EmulatorSource =
@@ -266,19 +267,60 @@ export function tokenize(template: string): string[] {
 export interface LaunchVars {
   rom: string;
   core?: string;
+  /** RomM platform slug and name of the game. */
+  slug?: string;
+  platform?: string;
+  /** The game's name in RomM, and its RomM id. */
+  game?: string;
+  romId?: number;
+  /** The collection the game was started from, if it was. */
+  collection?: string;
+  /** The launcher's save folder for the game (RomM save sync). */
+  saveDir?: string;
+}
+
+/** "Street Fighter II: Turbo" → "street-fighter-ii-turbo", safe in a path. */
+export function slugify(text: string): string {
+  return text.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+/**
+ * Every placeholder's value for a launch (see PLACEHOLDERS in the renderer for the list
+ * shown to the user). Unknown values are empty strings, so a template never keeps "{slug}".
+ */
+export function placeholderValues(emulator: EmulatorDef, vars: LaunchVars): Record<string, string> {
+  const ext = extname(vars.rom);
+  return {
+    rom: vars.rom,
+    romDir: dirname(vars.rom),
+    romFile: basename(vars.rom),
+    romName: basename(vars.rom, ext),
+    romExt: ext.replace(/^\./, ""),
+    emuDir: dirname(emulator.path),
+    emuExe: emulator.path,
+    core: vars.core ?? "",
+    slug: vars.slug ?? "",
+    platform: vars.platform ?? "",
+    game: vars.game ?? "",
+    romId: vars.romId !== undefined ? String(vars.romId) : "",
+    collection: vars.collection ?? "",
+    collectionSlug: vars.collection ? slugify(vars.collection) : "",
+    saveDir: vars.saveDir ?? "",
+    launcherDir: baseDir(),
+    "romm-launcherdir": baseDir(),
+    dataDir: dataDir(),
+  };
+}
+
+/** Replace {name} placeholders; names may contain letters, digits, "_" and "-". */
+export function expandPlaceholders(text: string, values: Record<string, string>): string {
+  return text.replace(/\{([\w-]+)\}/g, (match, key: string) => (key in values ? values[key]! : match));
 }
 
 /** Build argv for spawn(). Substitution happens per token, so spaces in paths are safe. */
 export function buildArgs(emulator: EmulatorDef, template: string, vars: LaunchVars): string[] {
-  const values: Record<string, string> = {
-    rom: vars.rom,
-    romDir: dirname(vars.rom),
-    romFile: basename(vars.rom),
-    romName: basename(vars.rom, extname(vars.rom)),
-    emuDir: dirname(emulator.path),
-    core: vars.core ?? "",
-  };
-  return tokenize(template).map((token) => token.replace(/\{(\w+)\}/g, (match, key: string) => values[key] ?? match));
+  const values = placeholderValues(emulator, vars);
+  return tokenize(template).map((token) => expandPlaceholders(token, values));
 }
 
 /** Save mode of an emulator, inferring it for configs written before save sync existed. */

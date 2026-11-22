@@ -118,11 +118,23 @@ switches with it), **Light** or **Dark**. It applies immediately, including scro
 | `{romDir}` | its folder |
 | `{romFile}` | file name with extension |
 | `{romName}` | file name without extension |
+| `{romExt}` | file extension, without the dot |
+| `{game}` | the game's name in RomM |
+| `{romId}` | the game's id in RomM |
+| `{slug}` | RomM platform slug (e.g. `snes`) |
+| `{platform}` | RomM platform name |
+| `{collection}` | name of the collection the game was started from; empty when started from anywhere else (RomM collections have no slug) |
+| `{collectionSlug}` | the same name made safe for a folder name (`RPG Favourites!` → `rpg-favourites`) |
 | `{emuDir}` | folder of the emulator executable |
+| `{emuExe}` | full path of the emulator executable |
 | `{core}` | core set for the platform, or chosen with *Play with…* (RetroArch: `-L "{emuDir}\cores\{core}_libretro.dll" "{rom}"`) |
-| `{saveDir}` | the launcher's save folder for the game (RomM save sync); in save/state file patterns only, which also take `*` as a wildcard |
+| `{launcherDir}` | folder of `RomM-Launcher.exe` (also written `{romm-launcherdir}`) |
+| `{dataDir}` | the launcher's data folder |
+| `{saveDir}` | the launcher's save folder for the game (RomM save sync) |
 
-The same list is under **Placeholders** below the arguments in Settings → Emulators and in Settings → Platforms.
+They work in the arguments (emulator and platform) and in save/state file patterns, which also take
+`*` as a wildcard. An unknown name is left as it is. The same list is under the arguments in
+Settings → Emulators and Settings → Platforms (*Show all placeholders*).
 
 Arguments are split like a Windows command line and substituted per argument, so paths
 with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers also work.

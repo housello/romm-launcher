@@ -455,7 +455,7 @@ function registerIpc(): void {
     };
   });
 
-  handle("game:play", (id: number, once?: unknown) =>
+  handle("game:play", (id: number, once?: unknown, context?: { collection?: unknown }) =>
     launch(id, emit, {
       onStart: () => {
         if (loadConfig().minimizeOnLaunch) win?.minimize();
@@ -466,7 +466,7 @@ function registerIpc(): void {
           win.focus();
         }
       },
-    }, gameChoice(once)).catch((error) => {
+    }, gameChoice(once), { collection: typeof context?.collection === "string" ? context.collection : undefined }).catch((error) => {
       emit({ romId: id, type: "idle" });
       throw error;
     }),

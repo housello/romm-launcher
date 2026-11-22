@@ -512,7 +512,7 @@ export async function uninstall(romId: number): Promise<void> {
 
 // ------------------------------------------------------------------ launch
 
-export async function launch(romId: number, emit: Emit, hooks: { onStart: () => void; onExit: () => void }, once?: GameEmulator | null): Promise<void> {
+export async function launch(romId: number, emit: Emit, hooks: { onStart: () => void; onExit: () => void }, once?: GameEmulator | null, context?: { collection?: string }): Promise<void> {
   if (running.has(romId)) throw new LaunchError("This game is already running.");
   const local = getInstalled(romId);
   // Offline, a downloaded game starts from its local record without asking RomM.
@@ -583,7 +583,16 @@ export async function launch(romId: number, emit: Emit, hooks: { onStart: () => 
   } catch (error) {
     emit({ romId, type: "notice", message: `Save sync skipped: ${(error as Error).message}`, level: "error" });
   }
-  const args = [...extraArgs, ...buildArgs(emulator, mapping.args?.trim() || emulator.args, { rom: romPath, core: mapping.core })];
+  const args = [...extraArgs, ...buildArgs(emulator, mapping.args?.trim() || emulator.args, {
+    rom: romPath,
+    core: mapping.core,
+    slug: game.platformSlug,
+    platform: game.platformName,
+    game: game.name,
+    romId,
+    collection: context?.collection,
+    saveDir: gameSaveDir(game.platformSlug, romId),
+  })];
   console.info(`[launch] ${emulator.path} ${args.map((a) => JSON.stringify(a)).join(" ")}`);
 
   const started = Date.now();

@@ -310,8 +310,9 @@ table.platforms td .row button { padding: 7px 9px; }
 .card .sub.reason { color: var(--accent-2); }
 
 /* placeholder list under the emulator/platform arguments */
-details.placeholders summary { cursor: pointer; color: var(--accent-2); font-size: 13px; }
-details.placeholders table { border-collapse: collapse; margin: 6px 0; font-size: 13px; }
-details.placeholders td { padding: 3px 12px 3px 0; vertical-align: top; }
-details.placeholders td:first-child { white-space: nowrap; }
-details.placeholders .hint { margin-top: 2px; }
+.placeholders .ph-toggle { cursor: pointer; color: var(--accent-2); white-space: nowrap; }
+.placeholders table { border-collapse: collapse; margin: 6px 0; font-size: 13px; }
+.placeholders th { text-align: left; padding: 8px 0 2px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.placeholders td { padding: 3px 12px 3px 0; vertical-align: top; }
+.placeholders td:first-child { white-space: nowrap; }
+.placeholders td .hint { margin-top: 2px; }

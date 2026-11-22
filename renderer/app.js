@@ -1199,7 +1199,9 @@ async function playGame(id, once) {
   try {
     state.jobs.set(id, { type: "progress", label: "Preparing…", received: 0, total: 0 });
     refreshJob(id);
-    await api("game:play", id, once ?? null);
+    // Started from a collection: its name fills {collection} / {collectionSlug}.
+    const context = state.view.kind === "collection" ? { collection: state.view.title } : {};
+    await api("game:play", id, once ?? null, context);
   } catch (error) {
     state.jobs.delete(id);
     refreshJob(id);
@@ -1745,24 +1747,58 @@ function refreshEmuViews() {
 }
 
 /** Every placeholder the launcher fills in, for the emulator and platform settings. */
+// Same names as placeholderValues() in src/main/emulators.ts. [name, meaning, example, shown without "Show all"]
 const PLACEHOLDERS = [
-  ["{rom}", "Full path of the game file to launch", "C:\\Games\\roms\\snes\\Chrono Trigger (USA).sfc"],
-  ["{romDir}", "Folder of the game file", "C:\\Games\\roms\\snes"],
-  ["{romFile}", "Game file name with extension", "Chrono Trigger (USA).sfc"],
-  ["{romName}", "Game file name without extension", "Chrono Trigger (USA)"],
-  ["{emuDir}", "Folder of the emulator's executable", "C:\\Emulators\\retroarch"],
-  ["{core}", "Libretro core set for the platform (or chosen with Play with…); arguments only", "snes9x"],
-  ["{saveDir}", "The launcher's save folder for the game (RomM save sync); save/state patterns only", "…\\saves\\snes\\1234"],
+  ["Game file", [
+    ["{rom}", "Full path of the game file to launch", "C:\\Games\\roms\\snes\\Chrono Trigger (USA).sfc", true],
+    ["{romDir}", "Folder of the game file", "C:\\Games\\roms\\snes", true],
+    ["{romFile}", "Game file name with extension", "Chrono Trigger (USA).sfc"],
+    ["{romName}", "Game file name without extension", "Chrono Trigger (USA)", true],
+    ["{romExt}", "Game file extension, without the dot", "sfc"],
+  ]],
+  ["Game", [
+    ["{game}", "The game's name in RomM", "Chrono Trigger"],
+    ["{romId}", "The game's id in RomM", "1234"],
+  ]],
+  ["Platform and collection", [
+    ["{slug}", "RomM platform slug", "snes", true],
+    ["{platform}", "RomM platform name", "Super Nintendo Entertainment System"],
+    ["{collection}", "Name of the collection the game was started from; empty when started from anywhere else (RomM collections have no slug)", "RPG Favourites"],
+    ["{collectionSlug}", "The same name made safe for a folder name", "rpg-favourites"],
+  ]],
+  ["Emulator", [
+    ["{emuDir}", "Folder of the emulator's executable", "C:\\Emulators\\retroarch", true],
+    ["{emuExe}", "Full path of the emulator's executable", "C:\\Emulators\\retroarch\\retroarch.exe"],
+    ["{core}", "Libretro core set for the platform, or chosen with Play with…", "snes9x", true],
+  ]],
+  ["Folders", [
+    ["{launcherDir}", "Folder of RomM-Launcher.exe (also written {romm-launcherdir})", "C:\\Games\\RomM Launcher", true],
+    ["{dataDir}", "The launcher's data folder", "C:\\Games\\RomM Launcher\\RomM Launcher Data"],
+    ["{saveDir}", "The launcher's save folder for the game (RomM save sync)", "…\\saves\\snes\\1234"],
+  ]],
 ];
 
-/** The placeholder list, folded away under a "Placeholders" line. */
+/** Common placeholders on one line, and the full table behind "Show all placeholders". */
 function placeholderHelp() {
-  return `<details class="placeholders"><summary>Placeholders</summary>
-    <table>${PLACEHOLDERS.map(([name, what, example]) => `<tr><td><code>${esc(name)}</code></td><td>${esc(what)}<div class="hint">e.g. ${esc(example)}</div></td></tr>`).join("")}</table>
-    <div class="hint">Arguments are split like a Windows command line and each placeholder is replaced inside its argument, so quote paths that may contain spaces: <code>"{rom}"</code>.
-      Example for RetroArch: <code>-L "{emuDir}\\cores\\{core}_libretro.dll" "{rom}"</code>. Save/state file patterns also take <code>*</code> as a wildcard, e.g. <code>{romDir}/{romName}.ss*</code>.</div>
-  </details>`;
+  const common = PLACEHOLDERS.flatMap(([, rows]) => rows.filter((r) => r[3]).map((r) => r[0]));
+  return `<div class="placeholders">
+    <div class="hint">Placeholders: ${common.map((n) => `<code>${esc(n)}</code>`).join(" ")} … <a class="ph-toggle" data-ph-toggle>Show all placeholders</a></div>
+    <div class="ph-all" hidden>
+      <table>${PLACEHOLDERS.map(([group, rows]) => `<tr><th colspan="2">${esc(group)}</th></tr>${rows.map(([name, what, example]) => `<tr><td><code>${esc(name)}</code></td><td>${esc(what)}<div class="hint">e.g. ${esc(example)}</div></td></tr>`).join("")}`).join("")}</table>
+      <div class="hint">They work in the arguments (emulator and platform) and in save/state file patterns. Arguments are split like a Windows command line and each placeholder is replaced inside its argument, so quote paths that may contain spaces: <code>"{rom}"</code>.
+        Example for RetroArch: <code>-L "{emuDir}\\cores\\{core}_libretro.dll" "{rom}"</code>. Save/state file patterns also take <code>*</code> as a wildcard, e.g. <code>{romDir}/{romName}.ss*</code>.</div>
+    </div>
+  </div>`;
 }
+
+// "Show all placeholders" / "Hide" anywhere in the settings.
+document.addEventListener("click", (e) => {
+  const toggle = e.target.closest?.("[data-ph-toggle]");
+  if (!toggle) return;
+  const all = toggle.closest(".placeholders").querySelector(".ph-all");
+  all.hidden = !all.hidden;
+  toggle.textContent = all.hidden ? "Show all placeholders" : "Hide";
+});
 
 /** RetroArch's catalog entry, stable or nightly (libretro cores, default cores per platform). */
 const isRetroArch = (key) => key === "retroarch" || presets?.presets.some((p) => p.key === key && p.base === "retroarch");

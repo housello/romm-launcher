@@ -18,7 +18,7 @@ import { copyFile, mkdir, readdir, readFile, rename, rm, stat, utimes, writeFile
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { apiFetch, apiGet } from "./api";
 import { loadConfig, type EmulatorDef, type PlatformMapping } from "./config";
-import { saveModeOf } from "./emulators";
+import { expandPlaceholders, placeholderValues, saveModeOf } from "./emulators";
 import { baseDir, dataDir, resolvePath, toStored } from "./paths";
 
 const MAX_SAVE_BYTES = 512 * 1024 * 1024;
@@ -100,7 +100,7 @@ export function gameSaveDir(platformSlug: string, romId: number): string {
 }
 
 function patternTarget(kind: SaveKind, pattern: string, vars: Record<string, string>): SaveTarget {
-  const resolved = resolve(baseDir(), pattern.replace(/\{(\w+)\}/g, (m, k: string) => vars[k] ?? m));
+  const resolved = resolve(baseDir(), expandPlaceholders(pattern, vars));
   const dir = dirname(resolved);
   const glob = basename(resolved);
   const re = new RegExp("^" + glob.split("*").map(escapeRe).join(".*") + "$", "i");
@@ -177,7 +177,7 @@ export async function prepareSaves(
     return { ctx: { romId: game.romId, emulatorKey: mapping.core || "retroarch", targets }, extraArgs: ["--appendconfig", cfg] };
   }
 
-  const vars = { rom: romPath, romDir: dirname(romPath), romFile: basename(romPath), romName, emuDir: dirname(emulator.path), saveDir: saveRoot };
+  const vars = placeholderValues(emulator, { rom: romPath, slug: game.platformSlug, romId: game.romId, saveDir: saveRoot });
   const targets: SaveTarget[] = [];
   if (emulator.savePattern?.trim()) targets.push(patternTarget("save", emulator.savePattern.trim(), vars));
   if (emulator.statePattern?.trim()) targets.push(patternTarget("state", emulator.statePattern.trim(), vars));
