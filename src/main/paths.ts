@@ -86,6 +86,7 @@ const CARRY_OVER = [
   "folder-sync.json",
   "play-sessions.json",
   "game-emulators.json",
+  "arcadedb-cache.json",
 ];
 
 type PathMap = (p: string) => string;

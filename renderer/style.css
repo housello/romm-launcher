@@ -316,3 +316,13 @@ table.platforms td .row button { padding: 7px 9px; }
 .placeholders td { padding: 3px 12px 3px 0; vertical-align: top; }
 .placeholders td:first-child { white-space: nowrap; }
 .placeholders td .hint { margin-top: 2px; }
+
+/* files/folders to download */
+.dl-list { padding: 4px 20px; max-height: 50vh; overflow-y: auto; }
+.dl-list label { display: flex; gap: 8px; align-items: center; padding: 3px 0; cursor: pointer; }
+.dl-list label .muted { margin-left: auto; font-size: 12px; }
+
+/* Arcade Database options in the MAME preview */
+.adb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 6px 18px; margin-top: 8px; }
+.adb-grid label { cursor: pointer; }
+.adb-grid .adb-shot { margin-right: 10px; white-space: nowrap; }

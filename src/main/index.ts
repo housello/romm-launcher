@@ -14,9 +14,10 @@ import { adoptEmulator, checkEmulatorUpdates, installCores, installEmulator, man
 import { lastVersions, rememberVersion } from "./lastVersions";
 import { applyRenames, buildPlan, undoInfo, undoLast } from "./mame";
 import { setGameEmulator, type GameEmulator } from "./gameEmulators";
+import { applyArcadeDb, type AdbOptions } from "./arcadedb";
 import { guessList, listXmlFromExe, mameExes, softwareLists } from "./mameSources";
 import { presetOf, syncFoldersOf, localPathOf, storedFolderPath, webdavClient } from "./folderSync";
-import { cancel, openEmulator, resolveConflicts, syncAllFolders, webdavSyncOn, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
+import { cancel, resolveDownloadChoice, verifyDownloads, openEmulator, resolveConflicts, syncAllFolders, webdavSyncOn, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
 
 // Test data folder: ROMM_LAUNCHER_DATA keeps settings elsewhere. The packaged launcher keeps
 // everything next to its exe unless an "appdata" file is there (see paths.ts); that wins.
@@ -485,6 +486,7 @@ function registerIpc(): void {
     });
   });
   handle("game:chooseFile", (id: number, rel: string | null) => resolveFileChoice(id, rel));
+  handle("game:chooseDownload", (id: number, names: unknown) => resolveDownloadChoice(id, Array.isArray(names) ? names.map(String) : null));
   handle("game:syncSaves", (id: number) => syncNow(id, emit));
   handle("saves:resolveConflicts", (requestId: string, answers: Record<string, "local" | "remote" | "skip"> | null) => resolveConflicts(String(requestId), answers));
   handle("saves:syncAll", (ids?: string[]) => syncAllFolders(emit, Array.isArray(ids) ? ids : loadConfig().webdavSyncEmulators));
@@ -520,6 +522,7 @@ function registerIpc(): void {
     if (game) shell.openPath(game.dir);
   });
   handle("installed:list", () => listInstalled());
+  handle("installed:verify", () => verifyDownloads());
   handle("update:check", () => checkForUpdate());
   handle("update:install", (update: UpdateInfo) =>
     installUpdate(update, (received, total) => {
@@ -611,6 +614,19 @@ function registerIpc(): void {
     return applyRenames(loadConfig().serverUrl, clean, toolProgress);
   });
   handle("tools:mameUndoInfo", () => undoInfo());
+  handle("tools:arcadeDb", (games: unknown, options: unknown) => {
+    const list = (Array.isArray(games) ? games : []).filter((g: any) => Number.isInteger(g?.id) && typeof g?.set === "string").map((g: any) => ({ id: g.id, set: g.set }));
+    const o = (options ?? {}) as Partial<AdbOptions>;
+    const covers = ["flyer", "title", "ingame", "cabinet", "marquee", "box", "logo"];
+    const shots = ["ingame", "title", "select", "versus", "boss", "gameover", "end", "score", "howto"];
+    return applyArcadeDb(list, {
+      details: !!o.details,
+      history: !!o.history,
+      cover: covers.includes(String(o.cover)) ? (o.cover as AdbOptions["cover"]) : null,
+      screenshots: (Array.isArray(o.screenshots) ? o.screenshots : []).filter((s) => shots.includes(String(s))) as AdbOptions["screenshots"],
+      manual: !!o.manual,
+    }, toolProgress);
+  });
   handle("tools:mameExes", () => mameExes());
   handle("tools:mameListXml", (id: string) => listXmlFromExe(String(id), toolProgress));
   handle("tools:softwareLists", async (id: string, slugs: string[]) => {

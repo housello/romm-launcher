@@ -304,6 +304,12 @@ async function renderAbout() {
       : '<div class="muted">No emulator was downloaded by the launcher. Add one in Settings → Emulators and choose Download.</div>'}`;
 }
 
+// Links to outside pages, anywhere outside About too (e.g. Arcade Database in the MAME tool).
+$("#settings").addEventListener("click", (e) => {
+  const ext = e.target.closest("[data-ext]")?.dataset.ext;
+  if (ext) api("open:external", ext);
+});
+
 $("#about").addEventListener("click", async (e) => {
   const ext = e.target.closest("[data-ext]")?.dataset.ext;
   if (ext) return api("open:external", ext);
@@ -1132,6 +1138,41 @@ function choose({ title, message = "", items, selected, okLabel = "OK" }) {
  * Ask which copy of each conflicting save to keep: this PC's or WebDAV's (the newer
  * preselected). Resolves to { key: "local" | "remote" }, or null to decide later.
  */
+/** Which top-level files/folders of a multi-file game to download; all ticked to start with. Resolves to names, or null. */
+function chooseDownload(entries) {
+  return new Promise((resolve) => {
+    const box = $("#chooser");
+    box.innerHTML = `<div class="box" role="dialog" aria-modal="true">
+      <h2>What should be downloaded?</h2>
+      <div class="msg">This game has several files and folders. Untick what you don't need, such as patches or translations.</div>
+      <div class="dl-list">${entries.map((e, i) => `<label><input type="checkbox" data-dl="${i}" checked>
+        <span>${e.folder ? "📁 " : ""}${esc(e.name)}${e.folder ? "\\" : ""}</span>
+        <span class="muted">${e.folder ? `${e.files} file${e.files === 1 ? "" : "s"} · ` : ""}${fmtBytes(e.bytes)}</span></label>`).join("")}</div>
+      <div class="foot"><span class="muted" id="dl-total"></span><div class="spacer"></div><button data-x>Cancel</button><button class="primary" data-ok>Download</button></div></div>`;
+    box.hidden = false;
+    const ticked = () => $$("[data-dl]", box).filter((c) => c.checked).map((c) => entries[Number(c.dataset.dl)]);
+    const total = () => {
+      const t = ticked();
+      $("#dl-total").textContent = `${t.length} of ${entries.length} · ${fmtBytes(t.reduce((s, e) => s + e.bytes, 0))}`;
+      $("[data-ok]", box).disabled = !t.length;
+    };
+    total();
+    const finish = (value) => {
+      box.hidden = true;
+      box.innerHTML = "";
+      document.removeEventListener("keydown", onKey, true);
+      resolve(value);
+    };
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); finish(null); } };
+    document.addEventListener("keydown", onKey, true);
+    box.onchange = total;
+    box.onclick = (e) => {
+      if (e.target.matches("[data-ok]")) finish(ticked().map((x) => x.name));
+      else if (e.target.matches("[data-x]") || e.target === box) finish(null);
+    };
+  });
+}
+
 function chooseConflicts(emulator, conflicts) {
   return new Promise((resolve) => {
     const box = $("#chooser");
@@ -1238,6 +1279,9 @@ window.romm.onLaunchEvent((ev) => {
         selected: ev.suggested,
         okLabel: "Launch",
       }).then((rel) => api("game:chooseFile", id, rel));
+      break;
+    case "choose-download":
+      chooseDownload(ev.entries).then((names) => api("game:chooseDownload", id, names));
       break;
     case "save-conflicts":
       chooseConflicts(ev.emulator, ev.conflicts).then((answers) => api("saves:resolveConflicts", ev.requestId, answers));
@@ -1412,7 +1456,7 @@ function renderDetail() {
       ${r.summary ? `<h3>Summary</h3><div class="summary">${esc(r.summary)}</div>` : ""}
       ${installed ? `<h3>Downloaded files</h3><div class="files">${installed.files.map((f) => `
         <div><label><input type="radio" name="launch" value="${esc(f)}" ${f === installed.launchFile ? "checked" : ""}> ${esc(f)}</label></div>`).join("")}
-        <div class="hint" style="border:0">The selected file is passed to the emulator as {rom}. Location: ${esc(installed.dir)}</div></div>`
+        <div class="hint" style="border:0">${r.emulatorId === "__native" ? "Native game: the selected .exe/.bat/.lnk is the one started." : "The selected file is passed to the emulator as {rom}."} Location: ${esc(installed.dir)}</div></div>`
       : r.files.length ? `<h3>Files on server</h3><div class="files">${r.files.map((f) => `<div><span>${esc(f.name)}</span><span>${fmtBytes(f.size)}</span></div>`).join("")}</div>` : ""}
       ${savesHtml(r)}
       ${r.screenshots?.length ? `<h3>Screenshots</h3><div class="shots">${r.screenshots.map((s) => img(s.s, s.u)).filter(Boolean).map((src) => `<img loading="lazy" src="${esc(src)}">`).join("")}</div>` : ""}
@@ -1480,7 +1524,7 @@ function renderDetailActions() {
     ${!r.installed && !busy && !running ? '<button data-act="install">⭳ Download only</button>' : ""}
     ${r.offline ? "" : (r.collections ?? []).some((c) => c.isFavorite) ? '<button data-act="unfav" title="Remove from your RomM favourites">★ Favourite</button>' : '<button data-act="fav" title="Add to your RomM favourites">☆ Favourite</button>'}
     ${r.installed ? `<button data-act="sync" ${syncBlocker(r) ? `disabled title="${esc(syncBlocker(r))}"` : 'title="Download newer saves from RomM, then upload the ones changed here"'}>⟳ Sync saves</button>` : ""}
-    ${r.emulatorId ? `<button data-act="emu" title="Start ${esc(r.emulator)} without a game, to check its settings">⚙ Open emulator</button>` : ""}
+    ${r.emulatorId && r.emulatorId !== "__native" ? `<button data-act="emu" title="Start ${esc(r.emulator)} without a game, to check its settings">⚙ Open emulator</button>` : ""}
     ${r.installed && !busy && !running ? '<button data-act="folder">Open folder</button><button class="danger" data-act="uninstall">Delete local copy</button>' : ""}
     ${r.offline ? "" : '<button data-act="web">Open in RomM</button>'}`;
   if (busy) {
@@ -2047,21 +2091,24 @@ async function renderPlatforms(focusSlug) {
       <label><input type="checkbox" id="p-unmapped"> Only platforms without an emulator</label>
     </div>
     <div class="hint" style="margin-bottom:12px">The core (★ = suggested) is used by the <code>{core}</code> placeholder (RetroArch).
-      Arguments override the emulator's default for this platform only. Download folder: where this platform's games are saved,
+      Arguments override the emulator's default for this platform only. <b>Native (PC game)</b> runs the game's own .exe/.bat/.lnk (asked once when there are several, changeable in the game's details); its arguments are passed to the game, and zips are extracted. Download folder: where this platform's games are saved,
       as <code>folder${sep}rom.ext</code>; leave empty for <code>${esc(c.romDir)}${sep}&lt;slug&gt;</code>. Point it at an existing ROM
       folder and games already there are used without downloading.</div>
     <div style="margin:-4px 0 12px;max-width:900px">${placeholderHelp()}</div>
     <table class="platforms">
-      <thead><tr><th style="width:20%">Platform</th><th style="width:16%">Emulator</th><th style="width:17%">Core</th><th style="width:17%">Arguments override</th><th>Download folder</th></tr></thead>
+      <thead><tr><th style="width:20%">Platform</th><th style="width:16%">Emulator</th><th style="width:17%">Core</th><th style="width:15%">Arguments override</th><th style="width:12%">Multi-file games</th><th>Download folder</th></tr></thead>
       <tbody>${state.platforms.map((p) => {
         const key = c.platforms[p.slug] ? p.slug : c.platforms[p.fsSlug] ? p.fsSlug : p.slug;
         const m = c.platforms[key] || {};
         return `<tr data-slug="${esc(key)}" data-search="${esc((p.name + " " + p.slug + " " + p.fsSlug).toLowerCase())}" class="${focusSlug && (focusSlug === p.slug || focusSlug === p.fsSlug) ? "focus" : ""}">
           <td><b>${esc(p.name)}</b><div class="hint">${esc(p.slug)} · ${p.romCount} games</div></td>
-          <td><select data-f="emulatorId"><option value="">— none —</option>${c.emulators.map((e) => `<option value="${e.id}" ${m.emulatorId === e.id ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></td>
-          <td><select data-f="coreSel" ${m.emulatorId ? "" : "disabled"}>${coreOptions(m.emulatorId, p.slug, m.core)}</select>
+          <td><select data-f="emulatorId"><option value="">— none —</option><option value="__native" ${m.emulatorId === "__native" ? "selected" : ""} title="PC games: no emulator, the game's own .exe/.bat/.lnk is started">Native (PC game)</option>${c.emulators.map((e) => `<option value="${e.id}" ${m.emulatorId === e.id ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></td>
+          <td><select data-f="coreSel" ${m.emulatorId && m.emulatorId !== "__native" ? "" : "disabled"}>${coreOptions(m.emulatorId, p.slug, m.core)}</select>
               <input data-f="core" value="${esc(m.core ?? "")}" placeholder="core name" hidden></td>
           <td><input data-f="args" value="${esc(m.args ?? "")}" placeholder="default"></td>
+          <td><select data-f="layout" title="Where a game with several files goes. Flat: two games whose files share a name (e.g. disc1.bin) still get their own folder.">
+            <option value="subfolder" ${(m.layout ?? c.multiFileLayout) !== "flat" ? "selected" : ""}>Game folder</option>
+            <option value="flat" ${(m.layout ?? c.multiFileLayout) === "flat" ? "selected" : ""}>Flat</option></select></td>
           <td><div class="row"><input data-f="folder" value="${esc(m.folder ?? "")}" placeholder="default"><button data-browse title="Choose folder">…</button></div></td>
         </tr>`;
       }).join("")}</tbody>
@@ -2084,9 +2131,12 @@ async function renderPlatforms(focusSlug) {
     const core = $('[data-f="core"]', tr).value.trim();
     const args = $('[data-f="args"]', tr).value.trim();
     const folder = $('[data-f="folder"]', tr).value.trim();
+    const layout = $('[data-f="layout"]', tr).value === "flat" ? "flat" : "subfolder";
     const platforms = { ...state.config.platforms };
-    if (!emulatorId && !folder && !args) delete platforms[slug];
-    else platforms[slug] = { emulatorId, core: (emulatorId && core) || undefined, args: args || undefined, folder: folder || undefined };
+    // Stored only when it differs from the old global setting, so untouched platforms keep following it.
+    const ownLayout = layout !== (state.config.multiFileLayout === "flat" ? "flat" : "subfolder") ? layout : undefined;
+    if (!emulatorId && !folder && !args && !ownLayout) delete platforms[slug];
+    else platforms[slug] = { ...(platforms[slug] ?? {}), emulatorId, core: (emulatorId && core) || undefined, args: args || undefined, folder: folder || undefined, layout: ownLayout };
     await save({ platforms }, true);
     loadSidebar();
   };
@@ -2103,7 +2153,7 @@ async function renderPlatforms(focusSlug) {
       const current = coreInput.value.trim() || suggested;
       coreInput.value = emuId ? current : "";
       coreSel.innerHTML = coreOptions(emuId, tr.dataset.slug, coreInput.value);
-      coreSel.disabled = !emuId;
+      coreSel.disabled = !emuId || emuId === "__native";
       coreInput.hidden = true;
     }
     if (f === "coreSel") {
@@ -2163,10 +2213,8 @@ async function renderStorage() {
       <label>Emulator folder</label><div class="row"><input id="g-emudir" value="${esc(c.emulatorDir || "emulators")}"><button id="g-browse-emu">Browse…</button></div>
       <label></label><div class="hint">Where Settings → Emulators downloads emulators, one folder each. Emulators already there stay where they are.</div>
       <label></label><div class="hint">Games are kept here after the first play so they start instantly next time. Currently ${info.romCount} games, ${fmtBytes(info.romBytes)}.</div>
-      <label>Multi-file games</label><div>
-        <label style="display:block"><input type="radio" name="g-layout" value="subfolder" ${c.multiFileLayout !== "flat" ? "checked" : ""}> In a folder named after the game <span class="muted">roms\\psx\\Game (USA)\\…</span></label>
-        <label style="display:block;margin-top:4px"><input type="radio" name="g-layout" value="flat" ${c.multiFileLayout === "flat" ? "checked" : ""}> Flat, straight in the platform folder <span class="muted">roms\\psx\\…</span></label></div>
-      <label></label><div class="hint">Applies to games downloaded from now on. Flat: two games whose files have the same name (for example <code>disc1.bin</code>) would overwrite each other.</div>
+      <label>Multi-file games</label><label><input type="checkbox" id="g-askfiles" ${c.askDownloadFiles !== false ? "checked" : ""}> Ask which files and folders to download (e.g. to skip patch or translation folders)</label>
+      <label></label><div class="hint">Asked only for games with several top-level files or folders; all are ticked to start with. Whether they go in a folder named after the game or flat is set per platform: Settings → Platforms, "Multi-file games" column.</div>
       <label>Games per page</label><input id="g-page" type="number" min="20" max="500" value="${c.pageSize}">
       <label></label><label><input type="checkbox" id="g-min" ${c.minimizeOnLaunch ? "checked" : ""}> Minimize the launcher while a game is running</label>
       <label>Versions</label><label><input type="checkbox" id="g-group" ${c.groupVersions ? "checked" : ""}> One card per game; other versions (regions, revisions) are chosen when playing</label>
@@ -2190,6 +2238,8 @@ async function renderStorage() {
         when RomM Launcher starts and closes (if ticked above) and with ⟳ Sync saves in the menu bar, for the emulators you pick there.
         Games do not sync when they start or close. Nothing is deleted on either side. When a file changed both here and on WebDAV,
         you are asked which to keep; the other copy goes to <code>save-backups</code> in the launcher's data folder.</div>
+      <label>Downloaded games</label><div class="row"><span class="muted">Still where the launcher left them?</span><div class="spacer"></div><button id="g-verify">Check now</button></div>
+      <label></label><div class="hint">Looks for every downloaded game with the current folder settings. One moved to a new download folder (after changing it here or in Settings → Platforms) is found there and keeps working; one found nowhere is marked as not downloaded, to download again when played. No files are deleted.</div>
       <label>Cover image cache</label><div class="row"><span>${fmtBytes(info.imageBytes)}</span><button id="g-clear">Clear</button></div>
       <label></label><div class="row"><button class="primary" id="g-save">Save</button></div>
     </div>`;
@@ -2200,6 +2250,16 @@ async function renderStorage() {
   $("#g-browse").addEventListener("click", async () => {
     const dir = await api("dialog:pickFolder");
     if (dir) $("#g-dir").value = dir;
+  });
+  $("#g-verify").addEventListener("click", async () => {
+    const r = await api("installed:verify");
+    const list = (names) => names.slice(0, 8).join(", ") + (names.length > 8 ? ` and ${names.length - 8} more` : "");
+    const parts = [`${r.ok} of ${r.checked} in place`];
+    if (r.moved.length) parts.push(`found in the new folder: ${list(r.moved)}`);
+    if (r.missing.length) parts.push(`not found, now marked as not downloaded: ${list(r.missing)}`);
+    toast(`Downloaded games: ${parts.join("; ")}.`, r.missing.length ? "error" : "ok");
+    renderStorage();
+    if (state.view.kind === "installed" || state.view.kind === "home") reload();
   });
   $("#g-clear").addEventListener("click", async () => { await api("cache:clearImages"); renderStorage(); toast("Image cache cleared", "ok"); });
   $$('[name="g-where"]').forEach((r) => r.addEventListener("change", async () => {
@@ -2255,9 +2315,9 @@ async function renderStorage() {
     emulatorDir: $("#g-emudir").value.trim() || "emulators",
     pageSize: Math.max(20, Math.min(500, Number($("#g-page").value) || 60)),
     minimizeOnLaunch: $("#g-min").checked,
+    askDownloadFiles: $("#g-askfiles").checked,
     reportPlayTime: $("#g-playtime").checked,
     groupVersions: $("#g-group").checked,
-    multiFileLayout: $('[name="g-layout"]:checked')?.value === "flat" ? "flat" : "subfolder",
     saveDir: $("#g-saves").value.trim(),
   }));
   $("#g-browse-saves").addEventListener("click", async () => {
@@ -2444,6 +2504,56 @@ async function previewRenames() {
   }
 }
 
+// What to take from Arcade Database, remembered while the launcher runs.
+const adb = { details: true, history: true, cover: "flyer", coverOn: false, screenshots: ["ingame", "title"], shotsOn: false, manual: false };
+const ADB_COVERS = [["flyer", "Flyer"], ["title", "Title screen"], ["ingame", "In-game"], ["cabinet", "Cabinet"], ["marquee", "Marquee"], ["box", "Box"], ["logo", "Logo"]];
+const ADB_SHOTS = [["ingame", "In-game"], ["title", "Title"], ["select", "Select"], ["versus", "Versus"], ["boss", "Boss"], ["gameover", "Game over"], ["end", "Ending"], ["score", "Score"], ["howto", "How to play"]];
+
+/** The Arcade Database part of the MAME preview: what to fetch for the matched games. */
+function adbBoxHtml(count) {
+  return `<div class="emu adb" style="max-width:none;margin-top:14px">
+    <b>Also fill in from Arcade Database</b> <span class="hint">· <a data-ext="https://adb.arcadeitalia.net">adb.arcadeitalia.net</a> by motoschifo, used with the author's permission</span>
+    <div class="adb-grid">
+      <label><input type="checkbox" data-adb="details" ${adb.details ? "checked" : ""}> Game details <span class="hint">year, manufacturer, genre, series, video</span></label>
+      <label><input type="checkbox" data-adb="history" ${adb.history ? "checked" : ""}> History as the summary <span class="hint">with its copyright line</span></label>
+      <label><input type="checkbox" data-adb="coverOn" ${adb.coverOn ? "checked" : ""}> Cover art:
+        <select data-adb-cover>${ADB_COVERS.map(([v, l]) => `<option value="${v}" ${adb.cover === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label><input type="checkbox" data-adb="manual" ${adb.manual ? "checked" : ""}> Manual (PDF), when there is one</label>
+      <div><label><input type="checkbox" data-adb="shotsOn" ${adb.shotsOn ? "checked" : ""}> Screenshots:</label>
+        ${ADB_SHOTS.map(([v, l]) => `<label class="adb-shot"><input type="checkbox" data-adb-shot="${v}" ${adb.screenshots.includes(v) ? "checked" : ""}> ${l}</label>`).join("")}</div>
+    </div>
+    <div class="row" style="margin-top:10px"><span class="hint">For all ${count} game${count === 1 ? "" : "s"} found in the MAME list, renamed or not. Fetched one at a time and kept on this PC, so a second run is quick. Changes go to the server for every user and can't be undone here.</span>
+      <div class="spacer"></div><button class="primary" id="t-adb">Fill in ${count} game${count === 1 ? "" : "s"}</button></div>
+  </div>`;
+}
+
+function wireAdbBox(games) {
+  const box = $("#t-result .adb");
+  box.addEventListener("change", (e) => {
+    if (e.target.dataset.adb) adb[e.target.dataset.adb] = e.target.checked;
+    if (e.target.matches("[data-adb-cover]")) adb.cover = e.target.value;
+    if (e.target.dataset.adbShot) adb.screenshots = $$("[data-adb-shot]", box).filter((c) => c.checked).map((c) => c.dataset.adbShot);
+  });
+  $("#t-adb").addEventListener("click", async () => {
+    const options = { details: adb.details, history: adb.history, cover: adb.coverOn ? adb.cover : null, screenshots: adb.shotsOn ? adb.screenshots : [], manual: adb.manual };
+    if (!options.details && !options.history && !options.cover && !options.screenshots.length && !options.manual) return toast("Tick what to fill in first.", "error");
+    if (!confirm(`Fill in ${games.length} games on the server from Arcade Database?`)) return;
+    $("#t-adb").disabled = true;
+    try {
+      const r = await api("tools:arcadeDb", games, options);
+      const parts = [`${r.updated} updated`];
+      if (r.notFound.length) parts.push(`${r.notFound.length} not in Arcade Database`);
+      if (r.failed.length) parts.push(`${r.failed.length} failed (${r.failed[0].file}: ${r.failed[0].error})`);
+      toast(`Arcade Database: ${parts.join(", ")}.${r.stopped ? " Stopped: " + r.stopped : ""}`, r.failed.length || r.stopped ? "error" : "ok");
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      if ($("#t-adb")) $("#t-adb").disabled = false;
+      if ($("#t-progress")) $("#t-progress").hidden = true;
+    }
+  });
+}
+
 function renderPlan() {
   const p = mame.plan;
   const box = $("#t-result");
@@ -2478,7 +2588,9 @@ function renderPlan() {
           <td><input data-name value="${esc(r.proposed)}" title="${esc(r.description)}"></td>
           <td class="hint">${esc(r.year)}</td></tr>`).join("")}</tbody>
       </table></div>` : ""}
-    </div>`;
+    </div>
+    ${p.matchedGames?.length ? adbBoxHtml(p.matchedGames.length) : ""}`;
+  if (p.matchedGames?.length) wireAdbBox(p.matchedGames);
   if (!p.rows.length) return;
   const count = () => {
     const n = p.rows.filter((r) => r.selected).length;

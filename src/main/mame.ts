@@ -217,6 +217,8 @@ export interface PlanResult {
   unchanged: number;
   machinesInFile: number;
   features: FileFeatures;
+  /** Every game found in the file (renamed or not), for Arcade Database. */
+  matchedGames: Array<{ id: number; set: string }>;
 }
 
 export async function buildPlan(
@@ -277,7 +279,7 @@ export async function buildPlan(
     });
   }
   rows.sort((a, b) => a.file.localeCompare(b.file));
-  return { rows, games: roms.length, matched: found.length, unchanged, machinesInFile: machines, features };
+  return { rows, games: roms.length, matched: found.length, unchanged, machinesInFile: machines, features, matchedGames: found.map((x) => ({ id: x.rom.id, set: shortName(x.rom) })) };
 }
 
 // ------------------------------------------------------------------ apply

@@ -167,6 +167,14 @@ with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers
   When a game has **several launchable files** (e.g. `GAME.EXE` and `SETUP.EXE`), the first
   Play asks which one to start and remembers the answer. Readmes, data files and cue-sheet
   tracks are not offered. You can change the chosen file later in the game's detail panel.
+  Before downloading a game with **several top-level files or folders** (e.g. the game plus
+  `Patch\` and `Translation\` folders), the launcher lists them, all ticked: untick what you
+  don't want. Turn the question off in Settings → Storage.
+- **Native PC games**: choose **Native (PC game)** as a platform's emulator in Settings →
+  Platforms. No emulator is used: the game's own `.exe`, `.bat`, `.cmd` or `.lnk` is started
+  (zips are extracted first). When there are several, the first Play asks which one, listing
+  installers, uninstallers and redistributables last; change it later in the game's details
+  (Downloaded files). The platform's arguments, if any, are passed to the game.
 - **Versions**: RomM groups versions of the same game (regions, revisions) as *siblings*.
   The launcher shows one card per game, marked "N versions". The first Play asks which version
   to download and start, preselecting the one you already downloaded, and remembers it: later
@@ -221,10 +229,14 @@ with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers
 (`<platform slug>\<game folder>\...`), the same layout as a RomM library. The download folder
 is set in Settings → Storage; each platform can point somewhere else in Settings → Platforms.
 
-Settings → Storage → **Multi-file games → Flat** puts a multi-file game's files straight in the
-platform folder instead, without the game folder. A game whose files would replace a different
-file another downloaded game uses (two games' `disc1.bin`) still gets its own folder. The choice
-applies to games downloaded after it.
+Per platform, Settings → Platforms → **Multi-file games → Flat** puts a multi-file game's files
+straight in the platform folder instead, without the game folder. A game whose files would
+replace a different file another downloaded game uses (two games' `disc1.bin`) still gets its
+own folder. The choice applies to games downloaded after it.
+
+After moving games to a new folder, Settings → Storage → **Downloaded games → Check now** looks
+for each downloaded game with the current folder settings: one found in its new place keeps
+working, one found nowhere is marked as not downloaded. No files are deleted.
 
 If a platform points at a folder that already holds your ROMs, a game whose file is already
 there with the right size is used as-is, without downloading. **Delete local copy** only
@@ -350,6 +362,26 @@ XML or DAT (`mame -listxml`, or the DAT that came with your ROM set), e.g. `sf2`
 
 Names change for every user of the server, and a later RomM *Update metadata* scan may replace
 them with the metadata provider's titles. Renaming needs an account allowed to edit games.
+
+### Details, artwork and history from Arcade Database
+
+Below the preview, **Also fill in from Arcade Database** takes data from
+[Arcade Database](https://adb.arcadeitalia.net) (by motoschifo, used with the author's
+permission) for every game found in the MAME list, renamed or not. Tick what you want:
+
+- **Game details**: year, manufacturer, genre, series and video, into RomM's details (other
+  details the game already has stay);
+- **History as the summary**, followed by its copyright line and the source, as Arcade
+  Database asks;
+- **Cover art**: flyer, title screen, in-game, cabinet, marquee, box or logo (RomM downloads it);
+- **Screenshots**: in-game, title, select, versus, boss, game over, ending, score, how to play
+  (uploaded to the game, not twice);
+- **Manual** (PDF), when there is one.
+
+Sets are looked up one at a time and kept on this PC (`arcadedb-cache.json` in the data
+folder), so a second run is quick and asks Arcade Database nothing new. Sets it doesn't know
+are not asked for again. If it reports a bandwidth limit, the run stops; run it again later.
+Changes go to the server for every user and are not covered by **Undo**.
 
 ### MAME tags in names
 

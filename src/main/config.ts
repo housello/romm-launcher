@@ -63,6 +63,8 @@ export interface PlatformMapping {
   args?: string;
   /** Where this platform's games are downloaded; default <romDir><slug>. */
   folder?: string;
+  /** Multi-file games in a folder named after the game, or flat in the platform folder; unset uses multiFileLayout. */
+  layout?: "subfolder" | "flat";
 }
 
 export interface Config {
@@ -96,6 +98,8 @@ export interface Config {
    * the game, "flat" puts them straight in the platform's download folder.
    */
   multiFileLayout: "subfolder" | "flat";
+  /** Before downloading a game with several top-level files/folders, ask which (default on). */
+  askDownloadFiles?: boolean;
   /** "system" follows Windows' light/dark mode. */
   theme: "system" | "light" | "dark";
   /** Sync saves at all: before a launch and after the emulator exits. */

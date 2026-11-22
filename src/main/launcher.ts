@@ -28,6 +28,8 @@ export type LaunchEvent =
   | { romId: number; type: "installed" }
   | { romId: number; type: "idle" }
   | { romId: number; type: "choose-file"; files: string[]; suggested: string }
+  /** A multi-file game: which of its top-level files and folders to download (all ticked by default). */
+  | { romId: number; type: "choose-download"; entries: DownloadEntry[] }
   | { romId: number; type: "notice"; message: string; level: "ok" | "error" | "" }
   | { romId: number; type: "save-conflicts"; requestId: string; emulator: string; conflicts: Conflict[] };
 
@@ -92,6 +94,28 @@ export function resolveFileChoice(romId: number, rel: string | null): void {
   pendingChoices.delete(romId);
 }
 
+export interface DownloadEntry {
+  name: string;
+  folder: boolean;
+  files: number;
+  bytes: number;
+}
+
+const pendingDownloads = new Map<number, (names: string[] | null) => void>();
+
+export function resolveDownloadChoice(romId: number, names: string[] | null): void {
+  pendingDownloads.get(romId)?.(names);
+  pendingDownloads.delete(romId);
+}
+
+function askForDownload(romId: number, entries: DownloadEntry[], emit: Emit): Promise<string[] | null> {
+  pendingDownloads.get(romId)?.(null);
+  return new Promise((resolve) => {
+    pendingDownloads.set(romId, (names) => resolve(Array.isArray(names) ? names.filter((n) => entries.some((e) => e.name === n)) : null));
+    emit({ romId, type: "choose-download", entries });
+  });
+}
+
 function askForFile(romId: number, candidates: string[], suggested: string, emit: Emit): Promise<string | null> {
   pendingChoices.get(romId)?.(null);
   return new Promise((resolve) => {
@@ -117,6 +141,19 @@ export function cancel(romId: number): void {
   if (child && !child.killed) child.kill();
 }
 
+/** "Native" on a platform: no emulator, the game's own .exe/.bat/.cmd/.lnk is started. */
+export const NATIVE_ID = "__native";
+const NATIVE: EmulatorDef = { id: NATIVE_ID, name: "Native (PC)", path: "", args: "", extractZip: true, saveMode: "off" };
+const NATIVE_EXT = /\.(exe|bat|cmd|lnk)$/i;
+// Usually not the game itself: installers, redistributables, uninstallers, crash reporters.
+const NOT_THE_GAME = /(^|[\\/ _-])(unins\d*|setup|install(er)?|vc_?redist|dxsetup|directx|dotnet|physx|oalinst|crash|report|config(urator)?)[^\\/]*$/i;
+
+/** The files a native game could be started with, likely ones first. */
+export function nativeCandidates(files: string[]): string[] {
+  const exes = files.filter((f) => NATIVE_EXT.test(f));
+  return [...exes.filter((f) => !NOT_THE_GAME.test(f)), ...exes.filter((f) => NOT_THE_GAME.test(f))];
+}
+
 /**
  * Mapping + emulator for a game: a one-time choice for this launch, else the one
  * remembered for the game, else its platform's (trying slug then fs_slug).
@@ -127,7 +164,7 @@ export function resolveEmulator(slugs: string[], romId?: number, once?: GameEmul
   for (const slug of slugs) {
     const mapping = slug ? config.platforms[slug] : undefined;
     if (!mapping) continue;
-    const emulator = config.emulators.find((e) => e.id === mapping.emulatorId);
+    const emulator = mapping.emulatorId === NATIVE_ID ? NATIVE : config.emulators.find((e) => e.id === mapping.emulatorId);
     if (emulator) {
       platform = { emulator, mapping };
       break;
@@ -146,7 +183,7 @@ export function resolveEmulator(slugs: string[], romId?: number, once?: GameEmul
     return { emulator: { ...chosen, path: resolvePath(chosen.path) }, mapping, perGame: true };
   }
   // Emulator paths may be relative to the launcher's folder (portable).
-  return platform ? { emulator: { ...platform.emulator, path: resolvePath(platform.emulator.path) }, mapping: platform.mapping, perGame: false } : null;
+  return platform ? { emulator: { ...platform.emulator, path: platform.emulator.path ? resolvePath(platform.emulator.path) : "" }, mapping: platform.mapping, perGame: false } : null;
 }
 
 /** Start an emulator with no game, so its own settings can be checked; the launcher does not track it. */
@@ -269,6 +306,46 @@ export function platformFolder(slugs: string[]): string {
   return join(resolvePath(config.romDir), safeRelative(slugs.find(Boolean) ?? "unknown"));
 }
 
+/**
+ * Check that every downloaded game is still on disk. One that moved with a changed
+ * download folder (Settings → Storage or Platforms) is found in its new place and
+ * its record follows; one found nowhere is marked as not downloaded. Files are never
+ * touched, and games running now are skipped.
+ */
+export function verifyDownloads(): { checked: number; ok: number; moved: string[]; missing: string[] } {
+  const report = { checked: 0, ok: 0, moved: [] as string[], missing: [] as string[] };
+  for (const game of listInstalled()) {
+    if (running.has(game.romId)) continue;
+    report.checked++;
+    const present = (dir: string) => existsSync(join(dir, game.launchFile));
+    if (present(game.dir)) {
+      report.ok++;
+      continue;
+    }
+    // Where the current settings would put it: its own folder (same name as before) or flat.
+    const platformDir = platformFolder([game.platformSlug]);
+    const found = [join(platformDir, basename(game.dir)), platformDir].find(present);
+    if (found) {
+      putInstalled({ ...game, dir: found });
+      report.moved.push(game.name);
+    } else {
+      removeInstalled(game.romId);
+      report.missing.push(game.name);
+    }
+  }
+  return report;
+}
+
+/** How a platform's multi-file games are laid out: its own setting, else the old global one. */
+export function platformLayout(slugs: string[]): "subfolder" | "flat" {
+  const config = loadConfig();
+  for (const slug of slugs) {
+    const layout = slug ? config.platforms[slug]?.layout : undefined;
+    if (layout) return layout;
+  }
+  return config.multiFileLayout === "flat" ? "flat" : "subfolder";
+}
+
 /** True when the file is already there with the expected size (e.g. an existing library folder). */
 function alreadyThere(path: string, size: number | undefined): boolean {
   try {
@@ -382,11 +459,29 @@ export async function install(romId: number, emit: Emit, options: { extractZip?:
   try {
     const rom = await apiGet<RomDetail>(`/api/roms/${romId}`);
     const slug = rom.platform_slug || rom.platform_fs_slug || "unknown";
-    const files = (rom.files ?? []).filter((f) => typeof f.id === "number" && f.file_name);
+    let files = (rom.files ?? []).filter((f) => typeof f.id === "number" && f.file_name);
+    // Several top-level files/folders (e.g. the game plus Patch, Translation folders): ask which to get.
+    if (files.length > 1 && loadConfig().askDownloadFiles !== false) {
+      const topOf = (f: RomFile) => relativeName(rom, f).split(sep)[0]!;
+      const entries = new Map<string, DownloadEntry>();
+      for (const f of files) {
+        const top = topOf(f);
+        const entry = entries.get(top) ?? { name: top, folder: relativeName(rom, f).includes(sep), files: 0, bytes: 0 };
+        entry.files++;
+        entry.bytes += f.file_size_bytes ?? 0;
+        entries.set(top, entry);
+      }
+      if (entries.size > 1) {
+        const sorted = [...entries.values()].sort((a, b) => Number(b.folder) - Number(a.folder) || a.name.localeCompare(b.name));
+        const chosen = await askForDownload(romId, sorted, emit);
+        if (!chosen || !chosen.length) throw new LaunchError("Download cancelled.", "cancelled");
+        files = files.filter((f) => chosen.includes(topOf(f)));
+      }
+    }
     // Layout: <platform folder>\rom.ext for a single file, <platform folder>\<rom folder>\... for
     // multi-file ROMs, mirroring the RomM library, unless the settings ask for them flat.
     const platformDir = platformFolder([rom.platform_slug, rom.platform_fs_slug ?? ""]);
-    const ownFolder = files.length > 1 && (loadConfig().multiFileLayout !== "flat" || clashesInFolder(platformDir, rom, files));
+    const ownFolder = files.length > 1 && (platformLayout([rom.platform_slug, rom.platform_fs_slug ?? ""]) !== "flat" || clashesInFolder(platformDir, rom, files));
     const dir = ownFolder ? join(platformDir, safeRelative(rom.fs_name)) : platformDir;
     await mkdir(dir, { recursive: true });
 
@@ -525,7 +620,8 @@ export async function launch(romId: number, emit: Emit, hooks: { onStart: () => 
   const resolved = resolveEmulator(slugs, romId, once);
   if (!resolved) throw new LaunchError(`No emulator is set for platform "${slugs[0] ?? "unknown"}".`, "no-emulator");
   const { emulator, mapping } = resolved;
-  if (!existsSync(emulator.path)) throw new LaunchError(`Emulator not found: ${emulator.path}`);
+  const native = emulator.id === NATIVE_ID;
+  if (!native && !existsSync(emulator.path)) throw new LaunchError(`Emulator not found: ${emulator.path}`);
 
   let game = local ?? (await install(romId, emit, { extractZip: emulator.extractZip }));
   // Offline, the CHD check waits for the next launch with RomM reachable.
@@ -551,7 +647,13 @@ export async function launch(romId: number, emit: Emit, hooks: { onStart: () => 
   }
   // A folder with several launchable files: ask once which one, then remember it
   // (it can be changed later in the game's detail panel).
-  const candidates = launchCandidates(game.files);
+  // Native: only .exe/.bat/.cmd/.lnk can be started, and the choice is asked when there are several.
+  const candidates = native ? nativeCandidates(game.files) : launchCandidates(game.files);
+  if (native && !candidates.length) throw new LaunchError("This game has no .exe, .bat, .cmd or .lnk file to start.");
+  if (native && candidates.length === 1 && game.launchFile !== candidates[0]) {
+    game = { ...game, launchFile: candidates[0]! };
+    putInstalled(game);
+  }
   if (candidates.length > 1 && !game.launchChosen) {
     emit({ romId, type: "idle" });
     const rel = await askForFile(romId, candidates, candidates.includes(game.launchFile) ? game.launchFile : candidates[0]!, emit);
@@ -583,7 +685,9 @@ export async function launch(romId: number, emit: Emit, hooks: { onStart: () => 
   } catch (error) {
     emit({ romId, type: "notice", message: `Save sync skipped: ${(error as Error).message}`, level: "error" });
   }
-  const args = [...extraArgs, ...buildArgs(emulator, mapping.args?.trim() || emulator.args, {
+  // Native: the game file itself runs, with the platform's arguments (if any) as its own.
+  const runner: EmulatorDef = native ? { ...emulator, path: romPath } : emulator;
+  const args = [...extraArgs, ...buildArgs(runner, mapping.args?.trim() || emulator.args, {
     rom: romPath,
     core: mapping.core,
     slug: game.platformSlug,
@@ -593,14 +697,17 @@ export async function launch(romId: number, emit: Emit, hooks: { onStart: () => 
     collection: context?.collection,
     saveDir: gameSaveDir(game.platformSlug, romId),
   })];
-  console.info(`[launch] ${emulator.path} ${args.map((a) => JSON.stringify(a)).join(" ")}`);
+  console.info(`[launch] ${runner.path} ${args.map((a) => JSON.stringify(a)).join(" ")}`);
 
   const started = Date.now();
-  const isScript = /\.(bat|cmd)$/i.test(emulator.path);
+  const isScript = /\.(bat|cmd)$/i.test(runner.path);
   const quote = (s: string) => (/[\s"&|<>^()]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
-  const child = isScript
-    ? spawn([emulator.path, ...args].map(quote).join(" "), { cwd: dirname(emulator.path), shell: true, stdio: "ignore", windowsVerbatimArguments: true })
-    : spawn(emulator.path, args, { cwd: dirname(emulator.path), detached: false, stdio: "ignore", windowsHide: false });
+  // A shortcut opens the way Explorer would; "start /wait" keeps the game counted as running.
+  const child = /\.lnk$/i.test(runner.path)
+    ? spawn(`start "" /wait ${[runner.path, ...args].map(quote).join(" ")}`, { cwd: dirname(runner.path), shell: true, stdio: "ignore", windowsVerbatimArguments: true })
+    : isScript
+    ? spawn([runner.path, ...args].map(quote).join(" "), { cwd: dirname(runner.path), shell: true, stdio: "ignore", windowsVerbatimArguments: true })
+    : spawn(runner.path, args, { cwd: dirname(runner.path), detached: false, stdio: "ignore", windowsHide: false });
   running.set(romId, child);
   putInstalled({ ...game, lastPlayed: started });
 
