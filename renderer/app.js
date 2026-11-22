@@ -1195,11 +1195,11 @@ async function playVersion(versions, id) {
   return playGame(id);
 }
 
-async function playGame(id) {
+async function playGame(id, once) {
   try {
     state.jobs.set(id, { type: "progress", label: "Preparing…", received: 0, total: 0 });
     refreshJob(id);
-    await api("game:play", id);
+    await api("game:play", id, once ?? null);
   } catch (error) {
     state.jobs.delete(id);
     refreshJob(id);
@@ -1276,6 +1276,86 @@ function refreshJob(id) {
   if (state.detailId === id) renderDetailActions();
 }
 
+// ------------------------------------------------------------------ play with another emulator
+
+/** The emulator's argument template uses a libretro core ({core}), so a core has to be picked. */
+const needsCore = (e) => /\{core\}/.test(e?.args || "") || /retroarch/i.test(e?.path || "");
+
+/**
+ * Start a game with another emulator or core, once or from now on.
+ * The choice for "always" is kept per game; the platform's setting is not touched.
+ */
+async function playWith(r) {
+  const emulators = state.config.emulators;
+  const current = emulators.find((e) => e.id === r.emulatorId) ?? emulators[0];
+  const coresOf = async (e) => (needsCore(e) ? await api("emulators:cores", e.path).catch(() => []) : []);
+  const box = $("#chooser");
+  box.innerHTML = `<div class="box" role="dialog" aria-modal="true">
+    <h2>Play ${esc(r.name)} with…</h2>
+    <div class="msg">For this game only; the platform keeps its emulator.</div>
+    <div class="form" style="padding:4px 20px 0">
+      <label>Emulator</label>
+      <select id="pw-emu">${emulators.map((e) => `<option value="${esc(e.id)}" ${e.id === current?.id ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select>
+      <label id="pw-core-label">Core</label>
+      <select id="pw-core"></select>
+      <label></label>
+      <label><input type="checkbox" id="pw-always" ${r.perGameEmulator ? "checked" : ""}> Always use this for this game</label>
+    </div>
+    <div class="foot"><button data-x>Cancel</button><button class="primary" data-ok>▶ Play</button></div></div>`;
+  box.hidden = false;
+
+  const fillCores = async () => {
+    const emu = emulators.find((e) => e.id === $("#pw-emu").value);
+    const show = needsCore(emu);
+    $("#pw-core").hidden = $("#pw-core-label").hidden = !show;
+    if (!show) return;
+    const cores = await coresOf(emu);
+    const preferred = emu.id === r.emulatorId ? r.emulatorCore : null;
+    $("#pw-core").innerHTML = cores.length
+      ? cores.map((c) => `<option ${c === preferred ? "selected" : ""}>${esc(c)}</option>`).join("")
+      : '<option value="">No cores installed: download them on RetroArch\'s card</option>';
+  };
+  await fillCores();
+  $("#pw-emu").addEventListener("change", fillCores);
+
+  const choice = await new Promise((resolve) => {
+    const finish = (value) => {
+      box.hidden = true;
+      box.innerHTML = "";
+      document.removeEventListener("keydown", onKey, true);
+      resolve(value);
+    };
+    const ok = () => {
+      const emu = emulators.find((e) => e.id === $("#pw-emu").value);
+      const core = needsCore(emu) ? $("#pw-core").value : "";
+      if (needsCore(emu) && !core) return toast("Pick a core first.", "error");
+      finish({ emulatorId: emu.id, core, always: $("#pw-always").checked });
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.stopPropagation(); finish(null); }
+      if (e.key === "Enter" && e.target.tagName !== "SELECT") { e.preventDefault(); ok(); }
+    };
+    document.addEventListener("keydown", onKey, true);
+    box.onclick = (e) => {
+      if (e.target.matches("[data-ok]")) ok();
+      else if (e.target.matches("[data-x]") || e.target === box) finish(null);
+    };
+  });
+  if (!choice) return;
+  const pick = { emulatorId: choice.emulatorId, ...(choice.core ? { core: choice.core } : {}) };
+  if (choice.always) {
+    await api("game:setEmulator", r.id, pick);
+  } else if (r.perGameEmulator) {
+    // unticked: the game goes back to its platform's emulator after this launch
+    await api("game:setEmulator", r.id, null);
+  }
+  if (state.detailId === r.id) {
+    detailRom = await api("rom:get", r.id).catch(() => detailRom);
+    renderDetail();
+  }
+  return playGame(r.id, choice.always ? null : pick);
+}
+
 // ------------------------------------------------------------------ detail
 
 let detailRom = null;
@@ -1313,7 +1393,7 @@ function renderDetail() {
         <h2>${esc(r.name)}</h2>
         <div class="meta">${esc(r.platformName)}${r.year ? " · " + r.year : ""} · ${fmtBytes(r.sizeBytes)}</div>
         ${r.companies?.length ? `<div class="meta">${esc(r.companies.slice(0, 3).join(", "))}</div>` : ""}
-        <div class="meta">Emulator: ${r.emulator ? esc(r.emulator) : `<a data-act="map">not set — choose one</a>`}</div>
+        <div class="meta">Emulator: ${r.emulator ? esc(r.emulator) : `<a data-act="map">not set — choose one</a>`}${r.perGameEmulator ? ` <span class="muted">· for this game${r.platformEmulator ? ` (platform: ${esc(r.platformEmulator)})` : ""}</span> <a data-act="emu-reset" title="Go back to the platform's emulator">Use platform's</a>` : ""}</div>
         <div class="chips">${chips.slice(0, 10).map((c) => `<span class="chip">${esc(c)}</span>`).join("")}</div>
       </div>
     </div>
@@ -1394,7 +1474,7 @@ function renderDetailActions() {
   box.innerHTML = `
     ${running ? `<button class="primary" disabled>Running…</button><button data-act="stop">Stop</button>`
       : busy ? `<button class="primary" disabled>Working…</button><button data-act="cancel">Cancel</button>`
-      : `<button class="primary" data-act="play">▶ Play</button>`}
+      : `<button class="primary" data-act="play">▶ Play</button>${state.config.emulators?.length ? '<button data-act="play-with" title="Start this game with another emulator or core, once or always">Play with…</button>' : ""}`}
     ${!r.installed && !busy && !running ? '<button data-act="install">⭳ Download only</button>' : ""}
     ${r.offline ? "" : (r.collections ?? []).some((c) => c.isFavorite) ? '<button data-act="unfav" title="Remove from your RomM favourites">★ Favourite</button>' : '<button data-act="fav" title="Add to your RomM favourites">☆ Favourite</button>'}
     ${r.installed ? `<button data-act="sync" ${syncBlocker(r) ? `disabled title="${esc(syncBlocker(r))}"` : 'title="Download newer saves from RomM, then upload the ones changed here"'}>⟳ Sync saves</button>` : ""}
@@ -1470,6 +1550,14 @@ $("#detail").addEventListener("click", async (e) => {
     }
     if (act === "web") await api("open:external", r.webUrl);
     if (act === "map") return openSettings("platforms", r.platformSlug);
+    if (act === "play-with") return playWith(r);
+    if (act === "emu-reset") {
+      await api("game:setEmulator", r.id, null);
+      toast(`${r.name}: back to the platform's emulator`, "ok");
+      detailRom = await api("rom:get", r.id);
+      if (state.detailId === r.id) renderDetail();
+      return;
+    }
     if (act === "uninstall") {
       if (!confirm(`Delete the downloaded files of "${r.name}"? The game stays on your RomM server.`)) return;
       await api("game:uninstall", r.id);

@@ -13,6 +13,7 @@ import { checkForUpdate, cleanUpUpdate, installUpdate, type UpdateInfo } from ".
 import { adoptEmulator, checkEmulatorUpdates, installCores, installEmulator, managedFolder, releaseEmulator } from "./emulatorManager";
 import { lastVersions, rememberVersion } from "./lastVersions";
 import { applyRenames, buildPlan, undoInfo, undoLast } from "./mame";
+import { setGameEmulator, type GameEmulator } from "./gameEmulators";
 import { guessList, listXmlFromExe, mameExes, softwareLists } from "./mameSources";
 import { presetOf, syncFoldersOf, localPathOf, storedFolderPath, webdavClient } from "./folderSync";
 import { cancel, openEmulator, resolveConflicts, syncAllFolders, webdavSyncOn, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
@@ -415,7 +416,8 @@ function registerIpc(): void {
       noteFailure(error);
       return offlineDetail(id);
     }
-    const resolved = resolveEmulator([r.platform_slug, r.platform_fs_slug]);
+    const resolved = resolveEmulator([r.platform_slug, r.platform_fs_slug], id);
+    const platformOnly = resolveEmulator([r.platform_slug, r.platform_fs_slug]);
     // Refresh what a downloaded game shows offline.
     const local = getInstalled(id);
     if (local) putInstalled({ ...local, meta: metaOf(r) });
@@ -438,6 +440,9 @@ function registerIpc(): void {
       year: r.metadatum?.first_release_date || r.first_release_date ? new Date(Number(r.metadatum?.first_release_date ?? r.first_release_date)).getFullYear() : null,
       emulator: resolved ? resolved.emulator.name + (resolved.mapping.core ? ` (${resolved.mapping.core})` : "") : null,
       emulatorId: resolved?.emulator.id ?? null,
+      emulatorCore: resolved?.mapping.core ?? null,
+      perGameEmulator: !!resolved?.perGame,
+      platformEmulator: platformOnly ? platformOnly.emulator.name + (platformOnly.mapping.core ? ` (${platformOnly.mapping.core})` : "") : null,
       installed: getInstalled(id),
       versions: versionsOf(r),
       running: runningGames().includes(id),
@@ -450,7 +455,7 @@ function registerIpc(): void {
     };
   });
 
-  handle("game:play", (id: number) =>
+  handle("game:play", (id: number, once?: unknown) =>
     launch(id, emit, {
       onStart: () => {
         if (loadConfig().minimizeOnLaunch) win?.minimize();
@@ -461,14 +466,19 @@ function registerIpc(): void {
           win.focus();
         }
       },
-    }).catch((error) => {
+    }, gameChoice(once)).catch((error) => {
       emit({ romId: id, type: "idle" });
       throw error;
     }),
   );
+  // Remember an emulator (and core) for one game; null goes back to the platform's.
+  handle("game:setEmulator", (id: number, choice: unknown) => {
+    setGameEmulator(Number(id), gameChoice(choice));
+    return true;
+  });
   handle("game:install", async (id: number) => {
     const r = await apiGet<any>(`/api/roms/${id}`);
-    const resolved = resolveEmulator([r.platform_slug, r.platform_fs_slug]);
+    const resolved = resolveEmulator([r.platform_slug, r.platform_fs_slug], id);
     return install(id, emit, { extractZip: resolved?.emulator.extractZip ?? false }).catch((error) => {
       emit({ romId: id, type: "idle" });
       throw error;
@@ -619,12 +629,20 @@ function applyTheme(): void {
   nativeTheme.themeSource = theme === "light" || theme === "dark" ? theme : "system";
 }
 
+/** A validated emulator choice from the renderer, or null. */
+function gameChoice(value: unknown): GameEmulator | null {
+  const v = value as { emulatorId?: unknown; core?: unknown } | null | undefined;
+  if (!v || typeof v.emulatorId !== "string" || !loadConfig().emulators.some((e) => e.id === v.emulatorId)) return null;
+  return { emulatorId: v.emulatorId, ...(typeof v.core === "string" && /^[\w.-]+$/.test(v.core) ? { core: v.core } : {}) };
+}
+
 /** A downloaded game's detail panel from its local record, for when RomM is unreachable. */
 function offlineDetail(id: number) {
   const game = getInstalled(id);
   if (!game) throw new LaunchError("RomM cannot be reached, and this game is not downloaded.", "offline");
   const meta = game.meta;
-  const resolved = resolveEmulator([game.platformSlug]);
+  const resolved = resolveEmulator([game.platformSlug], id);
+  const platformOnly = resolveEmulator([game.platformSlug]);
   return {
     id,
     offline: true,
@@ -645,6 +663,9 @@ function offlineDetail(id: number) {
     year: meta?.year ?? null,
     emulator: resolved ? resolved.emulator.name + (resolved.mapping.core ? ` (${resolved.mapping.core})` : "") : null,
     emulatorId: resolved?.emulator.id ?? null,
+    emulatorCore: resolved?.mapping.core ?? null,
+    perGameEmulator: !!resolved?.perGame,
+    platformEmulator: platformOnly ? platformOnly.emulator.name + (platformOnly.mapping.core ? ` (${platformOnly.mapping.core})` : "") : null,
     installed: game,
     versions: [],
     running: runningGames().includes(id),

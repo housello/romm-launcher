@@ -85,6 +85,7 @@ const CARRY_OVER = [
   "last-versions.json",
   "folder-sync.json",
   "play-sessions.json",
+  "game-emulators.json",
 ];
 
 type PathMap = (p: string) => string;

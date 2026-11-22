@@ -16,6 +16,7 @@ import { recordSession } from "./playSessions";
 import { describeFolderSync, syncEmulatorFolders, syncFoldersOf, type Conflict, type Resolution } from "./folderSync";
 import { findChdFolder, isArcade, setNameOf } from "./chd";
 import { resolvePath } from "./paths";
+import { gameEmulator, type GameEmulator } from "./gameEmulators";
 import { readZipFiles } from "./zip";
 import { describe, gameSaveDir, prepareSaves, pullSaves, pushSaves, type SyncContext } from "./saves";
 
@@ -116,17 +117,36 @@ export function cancel(romId: number): void {
   if (child && !child.killed) child.kill();
 }
 
-/** Mapping + emulator for a platform, trying slug then fs_slug. */
-export function resolveEmulator(slugs: string[]): { emulator: EmulatorDef; mapping: PlatformMapping } | null {
+/**
+ * Mapping + emulator for a game: a one-time choice for this launch, else the one
+ * remembered for the game, else its platform's (trying slug then fs_slug).
+ */
+export function resolveEmulator(slugs: string[], romId?: number, once?: GameEmulator | null): { emulator: EmulatorDef; mapping: PlatformMapping; perGame: boolean } | null {
   const config = loadConfig();
+  let platform: { emulator: EmulatorDef; mapping: PlatformMapping } | null = null;
   for (const slug of slugs) {
     const mapping = slug ? config.platforms[slug] : undefined;
     if (!mapping) continue;
     const emulator = config.emulators.find((e) => e.id === mapping.emulatorId);
-    // Emulator paths may be relative to the launcher's folder (portable).
-    if (emulator) return { emulator: { ...emulator, path: resolvePath(emulator.path) }, mapping };
+    if (emulator) {
+      platform = { emulator, mapping };
+      break;
+    }
   }
-  return null;
+  const choice = once ?? (romId !== undefined ? gameEmulator(romId) : null);
+  const chosen = choice && config.emulators.find((e) => e.id === choice.emulatorId);
+  if (choice && chosen) {
+    const same = platform?.emulator.id === chosen.id;
+    // The download folder stays the platform's; arguments and core follow the chosen emulator.
+    const mapping: PlatformMapping = {
+      ...(same ? platform!.mapping : { folder: platform?.mapping.folder }),
+      emulatorId: chosen.id,
+      core: choice.core || (same ? platform!.mapping.core : undefined),
+    };
+    return { emulator: { ...chosen, path: resolvePath(chosen.path) }, mapping, perGame: true };
+  }
+  // Emulator paths may be relative to the launcher's folder (portable).
+  return platform ? { emulator: { ...platform.emulator, path: resolvePath(platform.emulator.path) }, mapping: platform.mapping, perGame: false } : null;
 }
 
 /** Start an emulator with no game, so its own settings can be checked; the launcher does not track it. */
@@ -455,7 +475,7 @@ export async function uninstall(romId: number): Promise<void> {
   // Saves that live inside the game folder (custom patterns like {romDir}) would
   // be deleted with it: upload them first, and refuse if that fails.
   const current = getInstalled(romId);
-  const resolved = current && resolveEmulator([current.platformSlug]);
+  const resolved = current && resolveEmulator([current.platformSlug], romId);
   if (current && resolved && loadConfig().syncSaves && !webdavSyncOn()) {
     const { ctx } = await prepareSaves(resolved.emulator, resolved.mapping, current);
     const inside = ctx && ctx.targets.some((t) => (t.dir + sep).toLowerCase().startsWith((current.dir + sep).toLowerCase()));
@@ -492,7 +512,7 @@ export async function uninstall(romId: number): Promise<void> {
 
 // ------------------------------------------------------------------ launch
 
-export async function launch(romId: number, emit: Emit, hooks: { onStart: () => void; onExit: () => void }): Promise<void> {
+export async function launch(romId: number, emit: Emit, hooks: { onStart: () => void; onExit: () => void }, once?: GameEmulator | null): Promise<void> {
   if (running.has(romId)) throw new LaunchError("This game is already running.");
   const local = getInstalled(romId);
   // Offline, a downloaded game starts from its local record without asking RomM.
@@ -502,7 +522,7 @@ export async function launch(romId: number, emit: Emit, hooks: { onStart: () => 
   });
   if (!local && isOffline()) throw new LaunchError("RomM cannot be reached, so only downloaded games can be played.", "offline");
   const slugs = [rom?.platform_slug, rom?.platform_fs_slug, local?.platformSlug].filter((s): s is string => !!s);
-  const resolved = resolveEmulator(slugs);
+  const resolved = resolveEmulator(slugs, romId, once);
   if (!resolved) throw new LaunchError(`No emulator is set for platform "${slugs[0] ?? "unknown"}".`, "no-emulator");
   const { emulator, mapping } = resolved;
   if (!existsSync(emulator.path)) throw new LaunchError(`Emulator not found: ${emulator.path}`);
@@ -678,7 +698,7 @@ async function syncAfterExit(ctx: SyncContext, romId: number, emit: Emit): Promi
 export async function syncNow(romId: number, emit: Emit): Promise<string> {
   const game = getInstalled(romId);
   if (!game) throw new LaunchError("Download the game first: saves are matched to its files.");
-  const resolved = resolveEmulator([game.platformSlug]);
+  const resolved = resolveEmulator([game.platformSlug], romId);
   if (!resolved) throw new LaunchError(`No emulator is set for platform "${game.platformSlug}".`, "no-emulator");
   if (running.has(romId) || pushing.has(romId)) throw new LaunchError("The game is running; saves sync when it exits.");
   if (webdavSyncOn()) return syncFoldersFor(resolved.emulator, romId, emit);

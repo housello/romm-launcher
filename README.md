@@ -130,6 +130,10 @@ with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers
   and clicking another game shows that one instead.
 - **Full screen**: F11 or *⛶ Full screen* in the menu bar; Esc leaves it. In full screen, *✕ Exit* (top right) closes the launcher, which starts
   the way you left it.
+- **Play with…** next to Play starts a game with another emulator (and, for RetroArch, another
+  core) than its platform's. Once by default; tick *Always use this for this game* to keep it for
+  that game only (the details then show "for this game", with *Use platform's* to undo). The
+  game still downloads to its platform's folder, and save sync follows the emulator it runs in.
 - **⚙ Open emulator** in a game's detail panel starts its emulator with no game, to check or
   change the emulator's own settings.
 - **Play** downloads the game if needed (with progress), then starts the emulator.
