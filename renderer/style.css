@@ -263,25 +263,28 @@ table.platforms td .row button { padding: 7px 9px; }
 .viewmode button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
 .viewmode button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
-/* Details view: one row per game. */
-#grid.list { display: flex; flex-direction: column; gap: 0; }
-#grid.list .card {
-  display: grid; align-items: center; gap: 14px; padding: 4px 10px; border-radius: 0;
-  grid-template-columns: 34px minmax(0, 1fr) minmax(0, 260px) 92px 26px 34px;
-  grid-template-areas: "cover title sub vers dl play";
-  border-bottom: 1px solid var(--line);
-}
-#grid.list .card:hover { background: var(--panel-2); }
-#grid.list .cover { grid-area: cover; width: 34px; padding: 0; font-size: 0; border-radius: 4px; box-shadow: none; }
-#grid.list .cover img { border-radius: 4px; }
-#grid.list .card:hover .cover { transform: none; outline: none; }
-#grid.list .title { grid-area: title; margin: 0; font-size: 14px; }
-#grid.list .sub { grid-area: sub; font-size: 13px; }
-#grid.list .vbadge { grid-area: vers; position: static; justify-self: start; background: var(--panel-2); color: var(--text); }
-#grid.list .badge { grid-area: dl; position: static; justify-self: center; }
-#grid.list .play-btn { grid-area: play; position: static; transform: none; opacity: .55; width: 30px; height: 30px; font-size: 13px; box-shadow: none; }
-#grid.list .card:hover .play-btn { opacity: 1; }
-#grid.list .bar { left: 0; right: 0; top: auto; bottom: 0; height: 3px; border-radius: 0; }
+/* Details view: a table, one row per game, one column per field that has data. */
+#grid.list { display: block; overflow-x: auto; }
+.dtable { border-collapse: collapse; width: 100%; font-size: 13px; }
+.dtable th { position: sticky; top: -20px; z-index: 1; background: var(--bg); text-align: left; font-weight: 600; color: var(--muted);
+  padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.dtable th[data-sort] { cursor: pointer; }
+.dtable th[data-sort]:hover, .dtable th.sorted { color: var(--text); }
+.dtable td { padding: 3px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; max-width: 260px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dtable tr.card { display: table-row; border-radius: 0; }
+.dtable tr.card:hover { background: var(--panel-2); }
+.dtable td.c-cover { width: 34px; padding-right: 0; position: relative; }
+.dtable .cover { width: 34px; padding: 0; font-size: 0; border-radius: 4px; box-shadow: none; }
+.dtable .cover img { border-radius: 4px; }
+.dtable tr.card:hover .cover { transform: none; outline: none; }
+.dtable td.c-name { font-weight: 600; font-size: 14px; max-width: 360px; }
+.dtable .vbadge { position: static; margin-left: 8px; background: var(--panel-2); color: var(--text); font-weight: 400; }
+.dtable td.c-num { text-align: right; font-variant-numeric: tabular-nums; }
+.dtable .badge { position: static; }
+.dtable .play-btn { position: static; transform: none; opacity: .55; width: 30px; height: 30px; font-size: 13px; box-shadow: none; }
+.dtable tr.card:hover .play-btn { opacity: 1; }
+.dtable .bar { left: 0; right: 0; top: auto; bottom: 0; height: 3px; border-radius: 0; }
 
 /* Save conflict dialog: one block per file. */
 #chooser .conflict { padding: 8px 10px; border-bottom: 1px solid var(--line); }

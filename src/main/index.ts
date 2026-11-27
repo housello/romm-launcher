@@ -149,6 +149,36 @@ function romItem(r: any) {
     year: released ? new Date(Number(released)).getFullYear() : null,
     installed: !!getInstalled(r.id),
     versions: loadConfig().groupVersions ? versionsOf(r) : [],
+    details: listDetails(r, released),
+  };
+}
+
+/** Everything the details view can show for a game in a list, from what RomM sends anyway. */
+function listDetails(r: any, released: unknown) {
+  const m = r.metadatum ?? {};
+  const names = (v: unknown) => (Array.isArray(v) ? v.map((x: any) => (typeof x === "string" ? x : x?.name ?? "")).filter(Boolean) : []);
+  const user = r.rom_user ?? {};
+  return {
+    released: released ? new Date(Number(released)).toISOString().slice(0, 10) : "",
+    genres: names(m.genres),
+    developers: names(m.developers).length ? names(m.developers) : names(m.companies),
+    publishers: names(m.publishers),
+    franchises: names(m.franchises),
+    gameModes: names(m.game_modes),
+    ageRatings: names(m.age_ratings),
+    players: m.player_count ? String(m.player_count) : "",
+    rating: typeof m.average_rating === "number" && m.average_rating > 0 ? Math.round(m.average_rating * 10) / 10 : null,
+    regions: names(r.regions),
+    languages: names(r.languages),
+    revision: r.revision || r.version || "",
+    tags: names(r.tags),
+    file: r.fs_name || "",
+    size: typeof r.fs_size_bytes === "number" ? r.fs_size_bytes : null,
+    added: r.created_at ? String(r.created_at).slice(0, 10) : "",
+    lastPlayed: user.last_played ? String(user.last_played).slice(0, 10) : "",
+    status: user.status || "",
+    myRating: user.rating ? Number(user.rating) : null,
+    missing: !!r.missing_from_fs,
   };
 }
 

@@ -40,7 +40,12 @@ interface RomFile {
   file_name: string;
   full_path?: string;
   file_size_bytes?: number;
+  /** RomM 5.5: game, patch, translation, dlc… or media such as screenshot and manual. */
+  category?: string | null;
 }
+
+/** RomM file categories that are not needed to play: not downloaded with the game. */
+export const MEDIA_CATEGORIES = new Set(["screenshot", "manual", "walkthrough", "soundtrack"]);
 
 interface RomDetail {
   id: number;
@@ -459,7 +464,8 @@ export async function install(romId: number, emit: Emit, options: { extractZip?:
   try {
     const rom = await apiGet<RomDetail>(`/api/roms/${romId}`);
     const slug = rom.platform_slug || rom.platform_fs_slug || "unknown";
-    let files = (rom.files ?? []).filter((f) => typeof f.id === "number" && f.file_name);
+    // Screenshots, manuals, walkthroughs and soundtracks kept with the game in RomM are not part of the download.
+    let files = (rom.files ?? []).filter((f) => typeof f.id === "number" && f.file_name && !MEDIA_CATEGORIES.has(f.category ?? ""));
     // Several top-level files/folders (e.g. the game plus Patch, Translation folders): ask which to get.
     if (files.length > 1 && loadConfig().askDownloadFiles !== false) {
       const topOf = (f: RomFile) => relativeName(rom, f).split(sep)[0]!;

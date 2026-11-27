@@ -206,8 +206,11 @@ with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers
   launcher signs in with; public collections of other users are listed but read-only.
   **Smart collections** (RomM 5, built from filters) are listed too, marked *Smart*; their games
   follow their filters, so they are read-only here.
-- **Sort and view**: the toolbar's sort menu, and covers (▦) or details (☰, one row per game),
-  are remembered between starts.
+- **Sort and view**: the toolbar's sort menu, and covers (▦) or details (☰), are remembered
+  between starts. Details is a table with a column for every field RomM has for the games in
+  view (released, genres, developer, publisher, series, players, modes, rating, region,
+  languages, revision, tags, file, size, added, last played, your status and rating); empty
+  columns are left out. Click Name, Released, Size or Added to sort, again to reverse.
 - **Play time**: each play of 30 seconds or more is sent to RomM (5.5 or later) as a play
   session, so the server shows play time per game. Played offline, sessions wait and go up when
   RomM is reachable again. Turn it off in Settings → Storage.

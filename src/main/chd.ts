@@ -93,8 +93,10 @@ export async function findChdFolder(romsetFile: string): Promise<ChdFolder | nul
     const pick = chdFolderFor(set, candidates);
     if (!pick) return null;
     candidates.splice(candidates.indexOf(pick), 1);
-    const detail = await apiGet<{ files?: Array<{ id: number; file_name: string; file_size_bytes?: number }> }>(`/api/roms/${pick.id}`);
-    const files = (detail.files ?? []).filter((f) => typeof f.id === "number" && typeof f.file_name === "string");
+    const detail = await apiGet<{ files?: Array<{ id: number; file_name: string; file_size_bytes?: number; category?: string | null }> }>(`/api/roms/${pick.id}`);
+    // Screenshots or manuals RomM keeps with the folder are not CHDs to fetch.
+    const media = new Set(["screenshot", "manual", "walkthrough", "soundtrack"]);
+    const files = (detail.files ?? []).filter((f) => typeof f.id === "number" && typeof f.file_name === "string" && !media.has(f.category ?? ""));
     if (files.length && files.every((f) => extname(f.file_name).toLowerCase() === ".chd")) {
       return { romId: pick.id, folder: pick.fsName, files: files.map((f) => ({ id: f.id, fileName: f.file_name, sizeBytes: f.file_size_bytes ?? 0 })) };
     }

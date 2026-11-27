@@ -421,6 +421,7 @@ function reload() {
   state.favTotal = undefined;
   state.restTotal = undefined;
   state.seen = new Set(); // ids already shown, including folded versions
+  state.listOrder = []; // ids in display order, for the details table
   state.items = new Map(); // id -> list item, for the version chooser
   $("#grid").innerHTML = "";
   $("#empty").hidden = true;
@@ -513,7 +514,12 @@ async function loadMore() {
       return true;
     });
     state.shown += fresh.length;
-    $("#grid").insertAdjacentHTML("beforeend", fresh.map(cardHtml).join(""));
+    if (tableMode()) {
+      state.listOrder.push(...fresh.map((x) => x.id));
+      renderTable();
+    } else {
+      $("#grid").insertAdjacentHTML("beforeend", fresh.map(cardHtml).join(""));
+    }
     $("#view-count").textContent = `${state.total} games`;
     if (state.done && state.offset === 0) showEmpty(state.search || activeFilterCount() ? "No games match your search and filters." : "Nothing here.");
   } catch (error) {
@@ -587,10 +593,99 @@ async function renderInstalled() {
   const games = await api("installed:list");
   const q = state.search.toLowerCase();
   const list = games.filter((g) => !q || g.name.toLowerCase().includes(q));
-  $("#grid").innerHTML = list.map((g) => cardHtml({ id: g.romId, name: g.name, platformName: g.platformName, cover: g.coverPath, coverUrl: g.coverUrl, installed: true, sizeBytes: g.sizeBytes })).join("");
+  const items = list.map((g) => ({
+    id: g.romId, name: g.name, platformName: g.platformName, cover: g.coverPath, coverUrl: g.coverUrl, installed: true, sizeBytes: g.sizeBytes,
+    details: {
+      released: g.meta?.year ? String(g.meta.year) : "", genres: g.meta?.genres ?? [], developers: g.meta?.companies ?? [],
+      regions: g.meta?.regions ?? [], languages: g.meta?.languages ?? [],
+      file: g.launchFile, size: g.sizeBytes, added: new Date(g.installedAt).toISOString().slice(0, 10),
+      lastPlayed: g.lastPlayed ? new Date(g.lastPlayed).toISOString().slice(0, 10) : "",
+    },
+  }));
+  if (tableMode()) {
+    for (const it of items) state.items.set(it.id, it);
+    state.listOrder = items.map((it) => it.id);
+    renderTable();
+  } else {
+    $("#grid").innerHTML = items.map(cardHtml).join("");
+  }
   $("#view-count").textContent = `${list.length} games · ${fmtBytes(list.reduce((s, g) => s + g.sizeBytes, 0))}`;
   if (!list.length) showEmpty("No downloaded games yet. Press Play on any game to download and start it.");
 }
+
+// ------------------------------------------------------------------ details table
+
+/** The details view (☰) shows a table; collections and Home keep their own layout. */
+const tableMode = () => state.config?.viewMode === "list" && !["collections", "home"].includes(state.view.kind);
+
+const joinList = (v) => (Array.isArray(v) ? v.join(", ") : v ?? "");
+/** Columns of the details table: [key, header, value of an item, RomM sort field, numeric]. Shown only when some row has a value. */
+const DETAIL_COLUMNS = [
+  ["platform", "Platform", (r) => r.platformName ?? "", null],
+  ["released", "Released", (r) => r.details?.released || (r.year ? String(r.year) : ""), "first_release_date"],
+  ["genres", "Genres", (r) => joinList(r.details?.genres), null],
+  ["developers", "Developer", (r) => joinList(r.details?.developers), null],
+  ["publishers", "Publisher", (r) => joinList(r.details?.publishers), null],
+  ["franchises", "Series", (r) => joinList(r.details?.franchises), null],
+  ["players", "Players", (r) => r.details?.players ?? "", null, true],
+  ["gameModes", "Modes", (r) => joinList(r.details?.gameModes), null],
+  ["rating", "Rating", (r) => (r.details?.rating != null ? String(r.details.rating) : ""), null, true],
+  ["ageRatings", "Age rating", (r) => joinList(r.details?.ageRatings), null],
+  ["regions", "Region", (r) => joinList(r.details?.regions), null],
+  ["languages", "Languages", (r) => joinList(r.details?.languages), null],
+  ["revision", "Revision", (r) => r.details?.revision ?? "", null],
+  ["tags", "Tags", (r) => joinList(r.details?.tags), null],
+  ["file", "File", (r) => r.details?.file ?? "", null],
+  ["size", "Size", (r) => (r.details?.size != null ? fmtBytes(r.details.size) : r.sizeBytes ? fmtBytes(r.sizeBytes) : ""), "fs_size_bytes", true],
+  ["added", "Added", (r) => r.details?.added ?? "", "created_at"],
+  ["lastPlayed", "Last played", (r) => r.details?.lastPlayed ?? "", null],
+  ["status", "My status", (r) => r.details?.status ?? "", null],
+  ["myRating", "My rating", (r) => (r.details?.myRating ? String(r.details.myRating) : ""), null, true],
+];
+
+/** Draw the details table for the items in view (state.listOrder), with the columns that have data. */
+function renderTable() {
+  const items = state.listOrder.map((id) => state.items.get(id)).filter(Boolean);
+  const columns = DETAIL_COLUMNS.filter(([, , get]) => items.some((r) => get(r)));
+  const [sortField, sortDir] = state.sort.split(":");
+  // The Downloaded list is local, not sorted by RomM: its headers don't sort.
+  const sortable = state.view.kind !== "installed";
+  const head = (label, sortKey) => {
+    const sort = sortable ? sortKey : null;
+    const on = sort && sort === sortField;
+    return `<th ${sort ? `data-sort="${sort}" title="Sort by ${esc(label.toLowerCase())}"` : ""} class="${on ? "sorted" : ""}">${esc(label)}${on ? (sortDir === "desc" ? " ▼" : " ▲") : ""}</th>`;
+  };
+  const row = (r) => {
+    const src = img(r.cover, r.coverUrl);
+    const job = state.jobs.get(r.id);
+    const pct = job && job.total ? Math.round((job.received / job.total) * 100) : 0;
+    const installed = r.installed || r.versions?.some((v) => v.installed);
+    return `<tr class="card" data-id="${r.id}">
+      <td class="c-cover"><div class="cover">${src ? `<img loading="lazy" src="${esc(src)}" alt="">` : ""}<span></span></div>${job && job.type === "progress" ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}</td>
+      <td class="c-name" title="${esc(r.name)}"><span class="title">${esc(r.name)}</span>${r.versions?.length > 1 ? `<span class="vbadge" title="${esc(r.versions.map((v) => v.fileName).join("\n"))}">${r.versions.length} versions</span>` : ""}</td>
+      ${columns.map(([key, , get, , numeric]) => { const v = get(r); return `<td class="${numeric ? "c-num" : ""}" title="${esc(v)}">${esc(v)}</td>`; }).join("")}
+      <td class="c-dl">${installed ? '<span class="badge" title="Downloaded">✓</span>' : ""}</td>
+      <td><button class="play-btn" data-play="${r.id}" title="Play">▶</button></td>
+    </tr>`;
+  };
+  $("#grid").innerHTML = `<table class="dtable"><thead><tr><th></th>${head("Name", "name")}${columns.map(([, label, , sort]) => head(label, sort)).join("")}<th title="Downloaded">✓</th><th></th></tr></thead>
+    <tbody>${items.map(row).join("")}</tbody></table>`;
+}
+
+// A sortable column header: same as picking that order in the sort menu (clicking again reverses it).
+$("#grid").addEventListener("click", (e) => {
+  const th = e.target.closest("th[data-sort]");
+  if (!th) return;
+  e.stopPropagation();
+  const [field, dir] = state.sort.split(":");
+  state.sort = `${th.dataset.sort}:${field === th.dataset.sort && dir === "asc" ? "desc" : field === th.dataset.sort ? "asc" : th.dataset.sort === "name" ? "asc" : "desc"}`;
+  if (![...$("#sort").options].some((o) => o.value === state.sort)) {
+    $("#sort").insertAdjacentHTML("beforeend", `<option value="${state.sort}">${esc(th.textContent.replace(/[▲▼]/g, "").trim())} ${state.sort.endsWith("desc") ? "↓" : "↑"}</option>`);
+  }
+  $("#sort").value = state.sort;
+  reload();
+  api("config:set", { sort: state.sort }).then((c) => { state.config = c; }).catch(() => {});
+}, true);
 
 function cardHtml(r) {
   const src = img(r.cover, r.coverUrl);
@@ -748,6 +843,8 @@ $(".viewmode").addEventListener("click", async (e) => {
   if (!mode) return;
   state.config = { ...state.config, viewMode: mode };
   applyViewMode();
+  // Covers and the table are drawn differently, so the view is drawn again.
+  if (!["collections", "home"].includes(state.view.kind)) reload();
   state.config = await api("config:set", { viewMode: mode });
 });
 
@@ -1296,7 +1393,9 @@ window.romm.onLaunchEvent((ev) => {
 
 function markInstalled(id) {
   for (const card of $$(`.card[data-id="${id}"]`)) {
-    if (!$(".badge", card)) card.insertAdjacentHTML("afterbegin", '<span class="badge" title="Downloaded">✓</span>');
+    // A details-table row has its own cell for it.
+    const spot = card.tagName === "TR" ? $(".c-dl", card) : card;
+    if (spot && !$(".badge", card)) spot.insertAdjacentHTML("afterbegin", '<span class="badge" title="Downloaded">✓</span>');
   }
 }
 

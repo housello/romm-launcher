@@ -179,8 +179,9 @@ export async function applyArcadeDb(
       }
       if (Object.keys(fields).length) await updateRom(game.id, fields);
       if (options.screenshots.length && media) {
-        const rom = await apiGet<{ path_screenshots?: string[] }>(`/api/roms/${game.id}`);
-        const existing = (rom.path_screenshots ?? []).map((p) => p.split(/[\\/]/).pop()?.toLowerCase());
+        // An uploaded screenshot is one of the game's files, with category "screenshot".
+        const rom = await apiGet<{ files?: Array<{ file_name?: string; category?: string | null }> }>(`/api/roms/${game.id}`);
+        const existing = (rom.files ?? []).filter((f) => f.category === "screenshot").map((f) => String(f.file_name ?? "").toLowerCase());
         for (const kind of options.screenshots) {
           const url = media[`url_image_${kind}`];
           const fileName = `arcadedb-${game.set}-${kind}.png`;
