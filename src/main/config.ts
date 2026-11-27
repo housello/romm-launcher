@@ -104,13 +104,15 @@ export interface Config {
   theme: "system" | "light" | "dark";
   /** Sync saves at all: before a launch and after the emulator exits. */
   syncSaves: boolean;
-  /** Where saves sync with: RomM (per game) or a WebDAV folder (per emulator folder). */
-  saveBackend: "romm" | "webdav";
+  /** Where saves sync with: RomM (per game), or per emulator folder a WebDAV folder or a folder on this PC. */
+  saveBackend: "romm" | "webdav" | "local";
+  /** Local: the folder saves are mirrored to (another drive, a NAS share, a cloud app's folder). */
+  localSyncFolder?: string;
   webdav: WebdavSettings;
-  /** WebDAV: sync when the launcher starts, and before it closes. */
+  /** WebDAV and local: sync when the launcher starts, and before it closes. */
   webdavSyncOnStart: boolean;
   webdavSyncOnExit: boolean;
-  /** Emulators the WebDAV sync covers (ids); unset means every one with save folders. */
+  /** Emulators the WebDAV / local sync covers (ids); unset means every one with save folders. */
   webdavSyncEmulators?: string[];
   /** Encrypted like passwordEnc; never sent to the renderer. */
   webdavPasswordEnc: string;

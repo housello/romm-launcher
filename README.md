@@ -282,12 +282,12 @@ play the romset.
 
 ## Save sync
 
-Settings → Storage → **Save sync** is **Off**, **RomM** (the default) or **WebDAV**. With sync off,
+Settings → Storage → **Save sync** is **Off**, **RomM** (the default), **WebDAV** or **Local folder**. With sync off,
 every emulator uses its own native save folders and the launcher adds nothing to its command line.
 
-### WebDAV (Nextcloud, ownCloud…)
+### WebDAV (Nextcloud, ownCloud…) or a local folder
 
-Syncs the **save folders of each emulator** with a WebDAV folder, two ways:
+Syncs the **save folders of each emulator** with a WebDAV folder or a folder on this PC, two ways:
 
 ```
 <folder>/<emulator>/<save folder>/...   e.g.  RomM Launcher Saves/pcsx2/memcards/Mcd001.ps2
@@ -296,6 +296,13 @@ Syncs the **save folders of each emulator** with a WebDAV folder, two ways:
 - Set the WebDAV address (for Nextcloud: `https://<server>/remote.php/dav/files/<user>`),
   username, password (a Nextcloud *app password* is best) and folder, then **Save & test connection**.
   The password is stored encrypted, like the RomM one.
+- **Local folder** works the same way, with a folder instead of a server: another drive, a NAS
+  share (`\\nas\saves`), or a folder that the OneDrive, Google Drive or Dropbox desktop app syncs,
+  which then carries your saves to the cloud. Pick it with **Browse…**, then **Save & check folder**.
+  Everything below applies to both. A drive or share that is not there skips the sync with a message;
+  it is never taken as an empty folder. Copies a cloud app makes when both sides changed
+  ("conflicted copy") are ignored. WebDAV and the local folder keep separate sync records, so
+  switching between them never mistakes one for the other.
 - **Settings → Emulators** lists each emulator's save folders with a checkbox. The useful ones
   are ticked by default: RetroArch `saves`/`states`, Dolphin GameCube and Wii saves, PCSX2 and
   DuckStation memory cards, PPSSPP `SAVEDATA`, RPCS3 and shadPS4 save data, Cemu, Ryujinx and
@@ -318,11 +325,11 @@ whatever changes in the game's own folder as its saves.
 
 - Before a native game's first launch, it notes every file in the folder (size and date).
 - After you play, new or changed files and a list of deleted ones go into one zip, uploaded as
-  `Native\<platform>\<game> [<id>].zip` in the WebDAV folder. Logs, temporary files, crash dumps
+  `Native\<platform>\<game> [<id>].zip` in the WebDAV or local folder. Logs, temporary files, crash dumps
   and caches are left out, and a change bigger than 512 MB is not uploaded.
-- Before you play, a zip that changed on WebDAV (from another PC) is applied over the game folder,
+- Before you play, a zip that changed there (from another PC) is applied over the game folder,
   so a fresh download on a new PC starts with your saves.
-- If both this PC and WebDAV changed, the newer wins and the other is kept in
+- If both this PC and the synced copy changed, the newer wins and the other is kept in
   `save-backups\native\`.
 - **Sync now** in the game's details does both at once.
 

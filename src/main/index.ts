@@ -18,8 +18,8 @@ import { applyArcadeDb, type AdbOptions } from "./arcadedb";
 import { mediaFolder, mediaOf, openMedia, saveMedia } from "./media";
 import { nativeSaveInfo } from "./nativeSaves";
 import { guessList, listXmlFromExe, mameExes, softwareLists } from "./mameSources";
-import { presetOf, syncFoldersOf, localPathOf, storedFolderPath, webdavClient } from "./folderSync";
-import { cancel, resolveDownloadChoice, verifyDownloads, openEmulator, resolveConflicts, syncAllFolders, webdavSyncOn, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
+import { presetOf, syncFoldersOf, localPathOf, storedFolderPath, saveStore } from "./folderSync";
+import { cancel, resolveDownloadChoice, verifyDownloads, openEmulator, resolveConflicts, syncAllFolders, folderSyncOn, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
 
 // Test data folder: ROMM_LAUNCHER_DATA keeps settings elsewhere. The packaged launcher keeps
 // everything next to its exe unless an "appdata" file is there (see paths.ts); that wins.
@@ -59,9 +59,9 @@ function createWindow(): void {
     },
   });
   win.loadFile(join(__dirname, "..", "..", "renderer", "index.html"));
-  // WebDAV: sync the save folders before closing; the window shows it and can skip it.
+  // WebDAV / local: sync the save folders before closing; the window shows it and can skip it.
   win.on("close", (event) => {
-    if (quitting || !webdavSyncOn() || !loadConfig().webdavSyncOnExit) return;
+    if (quitting || !folderSyncOn() || !loadConfig().webdavSyncOnExit) return;
     event.preventDefault();
     win?.webContents.send("closing-sync");
   });
@@ -544,7 +544,7 @@ function registerIpc(): void {
     return [e.id, syncFoldersOf(e).map((f) => ({ ...f, local: localPathOf(e, f), exists: existsSync(localPathOf(e, f)), custom: !defaults.has(f.name) }))];
   })));
   handle("saves:testWebdav", async () => {
-    const { dav, base } = webdavClient();
+    const { dav, base } = saveStore();
     await dav.check(base);
     return true;
   });

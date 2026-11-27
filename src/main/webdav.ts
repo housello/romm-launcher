@@ -13,6 +13,16 @@ export interface DavFile {
   mtime: number;
 }
 
+/** Where folder-based save sync keeps its copies: WebDAV, or a folder on this PC. */
+export interface SaveStore {
+  /** For messages: "WebDAV", "the local folder". */
+  readonly label: string;
+  walk(path: string): Promise<Map<string, DavFile>>;
+  get(path: string): Promise<Buffer>;
+  put(path: string, data: Buffer): Promise<void>;
+  check(path: string): Promise<void>;
+}
+
 export class DavError extends Error {
   constructor(message: string, public status = 0) {
     super(message);
@@ -28,7 +38,8 @@ function tag(xml: string, name: string): string | null {
   return m ? m[1]!.trim() : null;
 }
 
-export class WebDav {
+export class WebDav implements SaveStore {
+  readonly label = "WebDAV";
   private readonly root: URL;
   private readonly auth: string;
   private readonly made = new Set<string>();

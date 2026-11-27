@@ -1,7 +1,8 @@
-// Two-way sync of emulator save folders with a WebDAV folder:
-//   <WebDAV folder>/<emulator>/<save folder name>/<files as they are>
+// Two-way sync of emulator save folders with a WebDAV folder or a folder on this PC:
+//   <sync folder>/<emulator>/<save folder name>/<files as they are>
 //
-// For each file, both sides are compared with the last sync (folder-sync.json):
+// For each file, both sides are compared with the last sync (folder-sync.json for
+// WebDAV, folder-sync-local.json for the local folder):
 // changed on one side only → copied to the other; changed on both → a conflict,
 // left alone until the user picks a side. Nothing is ever deleted: a file gone
 // from one side is copied back from the other. Before a local file is replaced,
@@ -14,7 +15,8 @@ import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { getWebdavPassword, loadConfig, type EmulatorDef, type SyncFolder } from "./config";
 import { PRESETS, type Preset } from "./emulators";
 import { dataDir, resolvePath } from "./paths";
-import { WebDav } from "./webdav";
+import { LocalStore } from "./localStore";
+import { WebDav, type SaveStore } from "./webdav";
 
 /** A file both sides changed since the last sync. */
 export interface Conflict {
@@ -68,7 +70,7 @@ export function syncFoldersOf(emulator: EmulatorDef): SyncFolder[] {
   }));
 }
 
-/** An emulator's folder on WebDAV: its catalog key, else its name made safe. */
+/** An emulator's folder in the sync folder: its catalog key, else its name made safe. */
 function remoteRoot(emulator: EmulatorDef): string {
   const key = presetOf(emulator)?.key;
   return key && key !== "custom" ? key : emulator.name.replace(/[^\w .-]/g, "_").trim() || emulator.id;
@@ -93,11 +95,15 @@ export function storedFolderPath(emulator: EmulatorDef, absolute: string): strin
 
 // ------------------------------------------------------------------ records
 
-const recordsFile = () => join(dataDir(), "folder-sync.json");
+// One record set per destination, so switching between WebDAV and local starts fresh rather than
+// mistaking the other one's etags for changes.
+const recordsFile = () => join(dataDir(), loadConfig().saveBackend === "local" ? "folder-sync-local.json" : "folder-sync.json");
 let records: Record<string, FileRecord> | null = null;
+let recordsPath = "";
 
 function loadRecords(): Record<string, FileRecord> {
-  if (records) return records;
+  if (records && recordsPath === recordsFile()) return records;
+  recordsPath = recordsFile();
   try {
     records = existsSync(recordsFile()) ? JSON.parse(readFileSync(recordsFile(), "utf8")) : {};
   } catch {
@@ -107,8 +113,9 @@ function loadRecords(): Record<string, FileRecord> {
 }
 
 function saveRecords(): void {
-  writeFileSync(recordsFile() + ".tmp", JSON.stringify(loadRecords()));
-  renameSync(recordsFile() + ".tmp", recordsFile());
+  const data = JSON.stringify(loadRecords());
+  writeFileSync(recordsPath + ".tmp", data);
+  renameSync(recordsPath + ".tmp", recordsPath);
 }
 
 // ------------------------------------------------------------------ local side
@@ -148,8 +155,10 @@ async function backup(folderKey: string, rel: string, full: string): Promise<voi
 
 // ------------------------------------------------------------------ sync
 
-export function webdavClient(): { dav: WebDav; base: string } {
+/** The chosen destination: the local folder (its root is the base), or WebDAV under its folder. */
+export function saveStore(): { dav: SaveStore; base: string } {
   const config = loadConfig();
+  if (config.saveBackend === "local") return { dav: new LocalStore(config.localSyncFolder ?? ""), base: "" };
   if (!config.webdav.url) throw new Error("Set the WebDAV address in Settings → Storage.");
   const dav = new WebDav(config.webdav.url, config.webdav.username, getWebdavPassword(config));
   return { dav, base: config.webdav.folder.replace(/^\/+|\/+$/g, "") };
@@ -163,7 +172,7 @@ export async function syncEmulatorFolders(
   emulator: EmulatorDef,
   resolve: (conflicts: Conflict[]) => Promise<Record<string, Resolution>>,
 ): Promise<FolderSyncReport> {
-  const { dav, base } = webdavClient();
+  const { dav, base } = saveStore();
   const report: FolderSyncReport = { uploaded: [], downloaded: [], conflicts: [] };
   const recs = loadRecords();
   // What a conflict needs to be settled later.
@@ -262,10 +271,10 @@ export async function syncEmulatorFolders(
       const choice = answers[conflict.key] ?? "skip";
       const p = pending.get(conflict.key)!;
       if (choice === "local") {
-        // The WebDAV copy it replaces is kept as a local backup.
+        // The synced copy it replaces is kept as a local backup.
         const remote = await dav.get(p.remotePath);
         const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-        const dest = join(dataDir(), "save-backups", ...p.folderKey.split("/"), ...p.rel.split("/")) + `.webdav.${stamp}`;
+        const dest = join(dataDir(), "save-backups", ...p.folderKey.split("/"), ...p.rel.split("/")) + `.${dav instanceof LocalStore ? "sync-folder" : "webdav"}.${stamp}`;
         await mkdir(dirname(dest), { recursive: true });
         await writeFile(dest, remote);
         await upload(p.remotePath, conflict.key, p.local, await readFile(p.local));
@@ -285,12 +294,15 @@ export async function syncEmulatorFolders(
 }
 
 /** One line for a toast. */
-export function describeFolderSync(report: FolderSyncReport): string | null {
+export function describeFolderSync(report: FolderSyncReport, where = saveStoreLabel()): string | null {
   const files = (n: number) => `${n} save file${n === 1 ? "" : "s"}`;
   const parts: string[] = [];
-  if (report.downloaded.length) parts.push(`${files(report.downloaded.length)} from WebDAV`);
-  if (report.uploaded.length) parts.push(`${files(report.uploaded.length)} to WebDAV`);
+  if (report.downloaded.length) parts.push(`${files(report.downloaded.length)} from ${where}`);
+  if (report.uploaded.length) parts.push(`${files(report.uploaded.length)} to ${where}`);
   return parts.length ? `Synced ${parts.join(", ")}` : null;
 }
+
+/** "WebDAV" or "the local folder", for messages. */
+export const saveStoreLabel = (): string => (loadConfig().saveBackend === "local" ? "the local folder" : "WebDAV");
 
 export const backupsDir = () => join(dataDir(), "save-backups") + sep;

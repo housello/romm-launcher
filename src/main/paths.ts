@@ -84,6 +84,7 @@ const CARRY_OVER = [
   "mame-rename-undo.json",
   "last-versions.json",
   "folder-sync.json",
+  "folder-sync-local.json",
   "play-sessions.json",
   "game-emulators.json",
   "arcadedb-cache.json",

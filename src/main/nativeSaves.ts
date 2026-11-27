@@ -1,13 +1,13 @@
-// Saves of native PC games, synced with WebDAV the way RetroArch's DOSBox Pure keeps its
+// Saves of native PC games, synced with WebDAV or the local sync folder the way RetroArch's DOSBox Pure keeps its
 // saves: whatever changed in the game's folder since it was downloaded goes into one zip.
 // No save folder has to be known.
 //
 // - Baseline: before a native game's first launch, every file in its folder is noted
 //   (size and modification time) in native-saves\<game id>.json in the data folder.
 // - After playing: new or changed files, plus a list of deleted ones, go into
-//   <WebDAV folder>/Native/<platform>/<game> [<id>].zip, uploaded when it differs from
+//   <sync folder>/Native/<platform>/<game> [<id>].zip, uploaded when it differs from
 //   what this PC last uploaded. Logs, temp files, crash dumps and caches are left out.
-// - Before playing: a zip on WebDAV that changed since this PC last saw it is applied
+// - Before playing: a zip there that changed since this PC last saw it is applied
 //   over the game folder. If this PC also has changes not yet uploaded, the newer side
 //   wins and the other is kept in save-backups\native\, so nothing is lost.
 
@@ -15,7 +15,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, join, relative, sep } from "node:path";
-import { backupsDir, webdavClient } from "./folderSync";
+import { backupsDir, saveStore } from "./folderSync";
 import type { InstalledGame } from "./library";
 import { dataDir } from "./paths";
 import { readZipFiles, writeZip, type ZipFile } from "./zip";
@@ -40,7 +40,7 @@ interface NativeRecord {
   createdAt: number;
   /** Signature of the changes this PC last uploaded or applied. */
   synced?: string;
-  /** The WebDAV zip's etag when this PC last uploaded or applied it. */
+  /** The synced zip's etag when this PC last uploaded or applied it. */
   remoteEtag?: string;
   lastUpload?: number;
 }
@@ -139,14 +139,14 @@ async function apply(game: InstalledGame, data: Buffer): Promise<void> {
 }
 
 async function remoteState(game: InstalledGame) {
-  const { dav, base } = webdavClient();
+  const { dav, base } = saveStore();
   const where = remotePath(base, game);
   const listing = await dav.walk(where.folder);
   return { dav, where, remote: listing.get(where.file) ?? null };
 }
 
 /**
- * Before playing: bring this PC up to date with WebDAV. Returns a sentence for the
+ * Before playing: bring this PC up to date with the synced copy. Returns a sentence for the
  * user, or null when nothing happened.
  */
 export async function nativeBeforePlay(game: InstalledGame): Promise<string | null> {
@@ -155,21 +155,21 @@ export async function nativeBeforePlay(game: InstalledGame): Promise<string | nu
   const { dav, where, remote } = await remoteState(game);
   if (!remote || remote.etag === record.remoteEtag) return null;
   const local = changes(game, record);
-  // Changes on this PC that were neither uploaded nor came from WebDAV.
+  // Changes on this PC that were neither uploaded nor came from the synced copy.
   const localUnsynced = (local.changed.length > 0 || local.deleted.length > 0) && local.signature !== record.synced;
   const data = await dav.get(`${where.folder}/${where.file}`);
   if (localUnsynced && local.newest > remote.mtime) {
-    // This PC's saves are newer: keep them (they upload after this play); keep WebDAV's copy too.
-    await keepBackup(game, data, "from WebDAV");
+    // This PC's saves are newer: keep them (they upload after this play); keep the synced copy too.
+    await keepBackup(game, data, dav.label === "WebDAV" ? "from WebDAV" : "from the sync folder");
     await writeRecord(game.romId, { ...record, remoteEtag: remote.etag });
-    return "Saves on this PC are newer than on WebDAV and were kept; the WebDAV copy is in the save backups.";
+    return `Saves on this PC are newer than in ${dav.label} and were kept; the other copy is in the save backups.`;
   }
   if (localUnsynced) await keepBackup(game, zipOfChanges(game, local), "this PC");
   await apply(game, data);
   await writeRecord(game.romId, { ...record, remoteEtag: remote.etag, synced: changes(game, record).signature });
   return localUnsynced
-    ? "Newer saves from WebDAV applied; this PC's older ones are in the save backups."
-    : "Saves from WebDAV applied.";
+    ? `Newer saves from ${dav.label} applied; this PC's older ones are in the save backups.`
+    : `Saves from ${dav.label} applied.`;
 }
 
 /** After playing: upload what changed, if it differs from what was last synced. */
@@ -187,7 +187,7 @@ export async function nativeAfterPlay(game: InstalledGame): Promise<string | nul
   await dav.put(`${where.folder}/${where.file}`, zipOfChanges(game, local));
   const after = (await dav.walk(where.folder)).get(where.file);
   await writeRecord(game.romId, { ...record, synced: local.signature, remoteEtag: after?.etag ?? record.remoteEtag, lastUpload: Date.now() });
-  return `Saves uploaded to WebDAV (${local.changed.length} changed file${local.changed.length === 1 ? "" : "s"}).`;
+  return `Saves copied to ${dav.label} (${local.changed.length} changed file${local.changed.length === 1 ? "" : "s"}).`;
 }
 
 /** For the details panel: whether native saves are tracked, and when they last went up. */
