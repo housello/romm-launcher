@@ -217,7 +217,14 @@ with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers
   between starts. Details is a table with a column for every field RomM has for the games in
   view (released, genres, developer, publisher, series, players, modes, rating, region,
   languages, revision, tags, file, size, added, last played, your status and rating); empty
-  columns are left out. Click Name, Released, Size or Added to sort, again to reverse.
+  columns are left out. The table loads the whole platform or collection, so sorting and
+  filtering cover every game, not just the first page:
+  - **Sort**: click any column header; again to reverse; a third time goes back to the
+    toolbar's order. Numbers and dates start with the highest/newest; empty values stay last.
+  - **Filter**: the row under the headers has a box per column. Text matches anywhere in the
+    value; number columns (players, rating, size, your rating) also take `>`, `>=`, `<`, `<=`,
+    `=`, sizes with KB/MB/GB (e.g. `>100MB`). Filters combine; the count shows "M of N games";
+    ✕ clears them, Esc clears one box.
 - **Play time**: each play of 30 seconds or more is sent to RomM (5.5 or later) as a play
   session, so the server shows play time per game. Played offline, sessions wait and go up when
   RomM is reachable again. Turn it off in Settings → Storage.

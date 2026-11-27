@@ -337,3 +337,11 @@ table.platforms td .row button { padding: 7px 9px; }
 .media-row > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .media-row .muted { font-size: 12px; white-space: nowrap; }
 .media-row button { padding: 2px 10px; font-size: 12px; }
+
+/* details table: sortable headers and a filter row (both stay on screen while scrolling) */
+.dtable th[data-col] { cursor: pointer; user-select: none; }
+.dtable th[data-col]:hover { color: var(--text); }
+.dtable thead tr:first-child th { height: 30px; box-sizing: border-box; }
+.dtable tr.filters th { top: 10px; padding: 3px 4px 6px; }
+.dtable tr.filters input { width: 100%; min-width: 60px; padding: 2px 6px; font-size: 12px; font-weight: 400; }
+.dtable tr.filters [data-clear-filters] { font-size: 13px; color: var(--accent-2); cursor: pointer; background: none; border: 0; padding: 0 4px; }

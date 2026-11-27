@@ -422,6 +422,8 @@ function reload() {
   state.restTotal = undefined;
   state.seen = new Set(); // ids already shown, including folded versions
   state.listOrder = []; // ids in display order, for the details table
+  state.tableSort = null;
+  state.tableFilters = {};
   state.items = new Map(); // id -> list item, for the version chooser
   $("#grid").innerHTML = "";
   $("#empty").hidden = true;
@@ -462,7 +464,8 @@ async function loadMore() {
   const partFilters = (fav) => ({ flags: { ...base.flags, favorite: fav }, lists: base.lists });
   const params = {
     offset: favFirst ? state.phaseOffset : state.offset,
-    limit: state.config.pageSize || 60,
+    // The table sorts and filters the whole view, so it loads it in big pages, one after another.
+    limit: tableMode() ? 500 : state.config.pageSize || 60,
     search: state.search,
     orderBy,
     orderDir,
@@ -520,7 +523,7 @@ async function loadMore() {
     } else {
       $("#grid").insertAdjacentHTML("beforeend", fresh.map(cardHtml).join(""));
     }
-    $("#view-count").textContent = `${state.total} games`;
+    if (!tableMode()) $("#view-count").textContent = `${state.total} games`;
     if (state.done && state.offset === 0) showEmpty(state.search || activeFilterCount() ? "No games match your search and filters." : "Nothing here.");
   } catch (error) {
     if (gen !== state.gen) return;
@@ -538,7 +541,7 @@ async function loadMore() {
     }
   }
   // The new page may not fill the screen (or the user kept scrolling meanwhile).
-  if (gen === state.gen && !state.error) setTimeout(maybeLoadMore, 0); // not rAF: paused while the window is hidden
+  if (gen === state.gen && !state.error) setTimeout(tableMode() ? loadMore : maybeLoadMore, 0); // not rAF: paused while the window is hidden
 }
 
 /** Load the next page when the end of the list is near. One measure, checked on every scroll. */
@@ -619,72 +622,176 @@ async function renderInstalled() {
 const tableMode = () => state.config?.viewMode === "list" && !["collections", "home"].includes(state.view.kind);
 
 const joinList = (v) => (Array.isArray(v) ? v.join(", ") : v ?? "");
-/** Columns of the details table: [key, header, value of an item, RomM sort field, numeric]. Shown only when some row has a value. */
+const sizeOf = (r) => (r.details?.size != null ? r.details.size : r.sizeBytes ?? null);
+/**
+ * Columns of the details table: key, header, the text shown, the value it sorts and compares by
+ * (numbers for number columns), and whether it is a number column. A column is shown only
+ * when some game in view has a value for it.
+ */
 const DETAIL_COLUMNS = [
-  ["platform", "Platform", (r) => r.platformName ?? "", null],
-  ["released", "Released", (r) => r.details?.released || (r.year ? String(r.year) : ""), "first_release_date"],
-  ["genres", "Genres", (r) => joinList(r.details?.genres), null],
-  ["developers", "Developer", (r) => joinList(r.details?.developers), null],
-  ["publishers", "Publisher", (r) => joinList(r.details?.publishers), null],
-  ["franchises", "Series", (r) => joinList(r.details?.franchises), null],
-  ["players", "Players", (r) => r.details?.players ?? "", null, true],
-  ["gameModes", "Modes", (r) => joinList(r.details?.gameModes), null],
-  ["rating", "Rating", (r) => (r.details?.rating != null ? String(r.details.rating) : ""), null, true],
-  ["ageRatings", "Age rating", (r) => joinList(r.details?.ageRatings), null],
-  ["regions", "Region", (r) => joinList(r.details?.regions), null],
-  ["languages", "Languages", (r) => joinList(r.details?.languages), null],
-  ["revision", "Revision", (r) => r.details?.revision ?? "", null],
-  ["tags", "Tags", (r) => joinList(r.details?.tags), null],
-  ["file", "File", (r) => r.details?.file ?? "", null],
-  ["size", "Size", (r) => (r.details?.size != null ? fmtBytes(r.details.size) : r.sizeBytes ? fmtBytes(r.sizeBytes) : ""), "fs_size_bytes", true],
-  ["added", "Added", (r) => r.details?.added ?? "", "created_at"],
-  ["lastPlayed", "Last played", (r) => r.details?.lastPlayed ?? "", null],
-  ["status", "My status", (r) => r.details?.status ?? "", null],
-  ["myRating", "My rating", (r) => (r.details?.myRating ? String(r.details.myRating) : ""), null, true],
+  { key: "name", label: "Name", get: (r) => r.name ?? "", always: true },
+  { key: "platform", label: "Platform", get: (r) => r.platformName ?? "" },
+  { key: "released", label: "Released", get: (r) => r.details?.released || (r.year ? String(r.year) : "") },
+  { key: "genres", label: "Genres", get: (r) => joinList(r.details?.genres) },
+  { key: "developers", label: "Developer", get: (r) => joinList(r.details?.developers) },
+  { key: "publishers", label: "Publisher", get: (r) => joinList(r.details?.publishers) },
+  { key: "franchises", label: "Series", get: (r) => joinList(r.details?.franchises) },
+  { key: "players", label: "Players", get: (r) => r.details?.players ?? "", value: (r) => parseInt(r.details?.players, 10) || null, numeric: true },
+  { key: "gameModes", label: "Modes", get: (r) => joinList(r.details?.gameModes) },
+  { key: "rating", label: "Rating", get: (r) => (r.details?.rating != null ? String(r.details.rating) : ""), value: (r) => r.details?.rating ?? null, numeric: true },
+  { key: "ageRatings", label: "Age rating", get: (r) => joinList(r.details?.ageRatings) },
+  { key: "regions", label: "Region", get: (r) => joinList(r.details?.regions) },
+  { key: "languages", label: "Languages", get: (r) => joinList(r.details?.languages) },
+  { key: "revision", label: "Revision", get: (r) => r.details?.revision ?? "" },
+  { key: "tags", label: "Tags", get: (r) => joinList(r.details?.tags) },
+  { key: "file", label: "File", get: (r) => r.details?.file ?? "" },
+  { key: "size", label: "Size", get: (r) => (sizeOf(r) != null ? fmtBytes(sizeOf(r)) : ""), value: sizeOf, numeric: true, bytes: true },
+  { key: "added", label: "Added", get: (r) => r.details?.added ?? "" },
+  { key: "lastPlayed", label: "Last played", get: (r) => r.details?.lastPlayed ?? "" },
+  { key: "status", label: "My status", get: (r) => r.details?.status ?? "" },
+  { key: "myRating", label: "My rating", get: (r) => (r.details?.myRating ? String(r.details.myRating) : ""), value: (r) => r.details?.myRating || null, numeric: true },
+  { key: "downloaded", label: "✓", get: (r) => (r.installed || r.versions?.some((v) => v.installed) ? "✓" : ""), always: true, title: "Downloaded" },
 ];
 
-/** Draw the details table for the items in view (state.listOrder), with the columns that have data. */
-function renderTable() {
-  const items = state.listOrder.map((id) => state.items.get(id)).filter(Boolean);
-  const columns = DETAIL_COLUMNS.filter(([, , get]) => items.some((r) => get(r)));
-  const [sortField, sortDir] = state.sort.split(":");
-  // The Downloaded list is local, not sorted by RomM: its headers don't sort.
-  const sortable = state.view.kind !== "installed";
-  const head = (label, sortKey) => {
-    const sort = sortable ? sortKey : null;
-    const on = sort && sort === sortField;
-    return `<th ${sort ? `data-sort="${sort}" title="Sort by ${esc(label.toLowerCase())}"` : ""} class="${on ? "sorted" : ""}">${esc(label)}${on ? (sortDir === "desc" ? " ▼" : " ▲") : ""}</th>`;
-  };
-  const row = (r) => {
-    const src = img(r.cover, r.coverUrl);
-    const job = state.jobs.get(r.id);
-    const pct = job && job.total ? Math.round((job.received / job.total) * 100) : 0;
-    const installed = r.installed || r.versions?.some((v) => v.installed);
-    return `<tr class="card" data-id="${r.id}">
-      <td class="c-cover"><div class="cover">${src ? `<img loading="lazy" src="${esc(src)}" alt="">` : ""}<span></span></div>${job && job.type === "progress" ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}</td>
-      <td class="c-name" title="${esc(r.name)}"><span class="title">${esc(r.name)}</span>${r.versions?.length > 1 ? `<span class="vbadge" title="${esc(r.versions.map((v) => v.fileName).join("\n"))}">${r.versions.length} versions</span>` : ""}</td>
-      ${columns.map(([key, , get, , numeric]) => { const v = get(r); return `<td class="${numeric ? "c-num" : ""}" title="${esc(v)}">${esc(v)}</td>`; }).join("")}
-      <td class="c-dl">${installed ? '<span class="badge" title="Downloaded">✓</span>' : ""}</td>
-      <td><button class="play-btn" data-play="${r.id}" title="Play">▶</button></td>
-    </tr>`;
-  };
-  $("#grid").innerHTML = `<table class="dtable"><thead><tr><th></th>${head("Name", "name")}${columns.map(([, label, , sort]) => head(label, sort)).join("")}<th title="Downloaded">✓</th><th></th></tr></thead>
-    <tbody>${items.map(row).join("")}</tbody></table>`;
+// Per view: the column sorted by (null = the order RomM sent) and the filter text per column.
+state.tableSort = null; // { key, dir: 1 | -1 }
+state.tableFilters = {};
+
+/** "100MB" / "1.5 GB" / "700k" → bytes; plain numbers stay as they are. */
+function parseAmount(text, bytes) {
+  const m = /^([\d.]+)\s*(k|kb|m|mb|g|gb|t|tb)?$/i.exec(text.trim());
+  if (!m) return NaN;
+  const n = parseFloat(m[1]);
+  if (!bytes || !m[2]) return n;
+  return n * 1024 ** ({ k: 1, m: 2, g: 3, t: 4 }[m[2][0].toLowerCase()]);
 }
 
-// A sortable column header: same as picking that order in the sort menu (clicking again reverses it).
+/** Whether a game passes one column's filter: text anywhere, or >, >=, <, <=, = for number columns. */
+function passes(col, r, filter) {
+  const text = filter.trim();
+  if (!text) return true;
+  const cmp = col.numeric && /^(>=|<=|>|<|=)\s*(.+)$/.exec(text);
+  if (cmp) {
+    const v = col.value(r);
+    const want = parseAmount(cmp[2], col.bytes);
+    if (v == null || Number.isNaN(want)) return false;
+    return { ">": v > want, ">=": v >= want, "<": v < want, "<=": v <= want, "=": v === want }[cmp[1]];
+  }
+  return col.get(r).toLowerCase().includes(text.toLowerCase());
+}
+
+/** The games in view after the column filters, in the column sort's order. */
+function tableRows() {
+  let items = state.listOrder.map((id) => state.items.get(id)).filter(Boolean);
+  const active = DETAIL_COLUMNS.filter((c) => (state.tableFilters[c.key] ?? "").trim());
+  if (active.length) items = items.filter((r) => active.every((c) => passes(c, r, state.tableFilters[c.key])));
+  const s = state.tableSort;
+  if (s) {
+    const col = DETAIL_COLUMNS.find((c) => c.key === s.key);
+    const val = col.value ?? col.get;
+    // Empty values go last whichever way the column is sorted.
+    items = [...items].sort((a, b) => {
+      const x = val(a), y = val(b);
+      const ex = x == null || x === "", ey = y == null || y === "";
+      if (ex || ey) return ex === ey ? 0 : ex ? 1 : -1;
+      return (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true, sensitivity: "base" })) * s.dir;
+    });
+  }
+  return items;
+}
+
+function tableRowHtml(r, columns) {
+  const src = img(r.cover, r.coverUrl);
+  const job = state.jobs.get(r.id);
+  const pct = job && job.total ? Math.round((job.received / job.total) * 100) : 0;
+  const cell = (c) => {
+    if (c.key === "name") return `<td class="c-name" title="${esc(r.name)}"><span class="title">${esc(r.name)}</span>${r.versions?.length > 1 ? `<span class="vbadge" title="${esc(r.versions.map((v) => v.fileName).join("\n"))}">${r.versions.length} versions</span>` : ""}</td>`;
+    if (c.key === "downloaded") return `<td class="c-dl">${c.get(r) ? '<span class="badge" title="Downloaded">✓</span>' : ""}</td>`;
+    const v = c.get(r);
+    return `<td class="${c.numeric ? "c-num" : ""}" title="${esc(v)}">${esc(v)}</td>`;
+  };
+  return `<tr class="card" data-id="${r.id}">
+    <td class="c-cover"><div class="cover">${src ? `<img loading="lazy" src="${esc(src)}" alt="">` : ""}<span></span></div>${job && job.type === "progress" ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}</td>
+    ${columns.map(cell).join("")}
+    <td><button class="play-btn" data-play="${r.id}" title="Play">▶</button></td>
+  </tr>`;
+}
+
+/** Only the rows (after a filter is typed): the header and its filter boxes keep focus. */
+function renderTableBody() {
+  const table = $("#grid .dtable");
+  if (!table) return renderTable();
+  const columns = JSON.parse(table.dataset.columns);
+  const cols = columns.map((k) => DETAIL_COLUMNS.find((c) => c.key === k));
+  const rows = tableRows();
+  table.tBodies[0].innerHTML = rows.map((r) => tableRowHtml(r, cols)).join("");
+  showTableCount(rows.length);
+}
+
+function showTableCount(shown) {
+  const total = state.view.kind === "installed" ? state.listOrder.length : state.total || state.listOrder.length;
+  const filtered = DETAIL_COLUMNS.some((c) => (state.tableFilters[c.key] ?? "").trim());
+  if (state.view.kind !== "installed") $("#view-count").textContent = filtered ? `${shown} of ${total} games` : `${total} games`;
+  const clear = $("#grid [data-clear-filters]");
+  if (clear) clear.hidden = !filtered;
+}
+
+/** Draw the details table: a sortable header, a filter box per column, and the rows. */
+function renderTable() {
+  const items = state.listOrder.map((id) => state.items.get(id)).filter(Boolean);
+  const columns = DETAIL_COLUMNS.filter((c) => c.always || items.some((r) => c.get(r)) || (state.tableFilters[c.key] ?? "").trim());
+  // Keep the filter box being typed in, with its caret, across a redraw (pages keep arriving).
+  const focused = document.activeElement?.dataset?.filter;
+  const caret = focused ? document.activeElement.selectionStart : 0;
+  const s = state.tableSort;
+  const head = (c) => `<th data-col="${c.key}" title="Sort by ${esc((c.title ?? c.label).toLowerCase())}${s?.key === c.key ? " (click again to reverse)" : ""}" class="${s?.key === c.key ? "sorted" : ""}">${esc(c.label)}${s?.key === c.key ? (s.dir < 0 ? " ▼" : " ▲") : ""}</th>`;
+  const filterBox = (c) => `<th class="f"><input data-filter="${c.key}" value="${esc(state.tableFilters[c.key] ?? "")}" placeholder="${c.numeric ? (c.bytes ? ">100MB" : ">=8") : "filter"}" title="${c.numeric ? "Text, or >, >=, <, <=, = a number" + (c.bytes ? " (KB, MB, GB)" : "") : "Shows games whose value contains this text"}"></th>`;
+  const rows = tableRows();
+  $("#grid").innerHTML = `<table class="dtable" data-columns='${esc(JSON.stringify(columns.map((c) => c.key)))}'>
+    <thead><tr><th></th>${columns.map(head).join("")}<th></th></tr>
+    <tr class="filters"><th><button class="link" data-clear-filters title="Clear all column filters" hidden>✕</button></th>${columns.map(filterBox).join("")}<th></th></tr></thead>
+    <tbody>${rows.map((r) => tableRowHtml(r, columns)).join("")}</tbody></table>`;
+  showTableCount(rows.length);
+  if (focused) {
+    const box = $(`#grid [data-filter="${focused}"]`);
+    if (box) { box.focus(); box.setSelectionRange(caret, caret); }
+  }
+}
+
+// Sort by a column: click its header; again to reverse; a third time goes back to RomM's order.
 $("#grid").addEventListener("click", (e) => {
-  const th = e.target.closest("th[data-sort]");
+  if (e.target.closest("[data-clear-filters]")) {
+    e.stopPropagation();
+    state.tableFilters = {};
+    return renderTable();
+  }
+  const th = e.target.closest("th[data-col]");
   if (!th) return;
   e.stopPropagation();
-  const [field, dir] = state.sort.split(":");
-  state.sort = `${th.dataset.sort}:${field === th.dataset.sort && dir === "asc" ? "desc" : field === th.dataset.sort ? "asc" : th.dataset.sort === "name" ? "asc" : "desc"}`;
-  if (![...$("#sort").options].some((o) => o.value === state.sort)) {
-    $("#sort").insertAdjacentHTML("beforeend", `<option value="${state.sort}">${esc(th.textContent.replace(/[▲▼]/g, "").trim())} ${state.sort.endsWith("desc") ? "↓" : "↑"}</option>`);
+  const key = th.dataset.col;
+  const s = state.tableSort;
+  const numericOrDate = ["players", "rating", "size", "myRating", "released", "added", "lastPlayed"].includes(key);
+  const first = numericOrDate ? -1 : 1; // numbers and dates: biggest/newest first
+  state.tableSort = s?.key !== key ? { key, dir: first } : s.dir === first ? { key, dir: -first } : null;
+  renderTable();
+}, true);
+
+let columnFilterTimer = 0;
+$("#grid").addEventListener("input", (e) => {
+  const key = e.target.dataset?.filter;
+  if (!key) return;
+  state.tableFilters[key] = e.target.value;
+  clearTimeout(columnFilterTimer);
+  columnFilterTimer = setTimeout(renderTableBody, 120);
+});
+// Typing in a filter box is not a click on the game rows.
+$("#grid").addEventListener("keydown", (e) => {
+  if (e.target.dataset?.filter && e.key === "Escape") {
+    e.stopPropagation();
+    e.target.value = "";
+    state.tableFilters[e.target.dataset.filter] = "";
+    renderTableBody();
   }
-  $("#sort").value = state.sort;
-  reload();
-  api("config:set", { sort: state.sort }).then((c) => { state.config = c; }).catch(() => {});
 }, true);
 
 function cardHtml(r) {
@@ -827,6 +934,7 @@ $("#view-search").addEventListener("input", () => {
 });
 $("#sort").addEventListener("change", () => {
   state.sort = $("#sort").value;
+  state.tableSort = null;
   reload();
   api("config:set", { sort: state.sort }).then((c) => { state.config = c; }).catch(() => {});
 });
