@@ -1578,6 +1578,7 @@ function syncBlocker(r) {
   if (r.offline) return "RomM cannot be reached.";
   if (!r.syncSaves) return "Save sync is turned off (Settings → Storage).";
   if (!r.emulator) return "No emulator is set for this platform.";
+  if (r.emulatorId === "__native") return "Native games' saves sync with WebDAV only (Settings → Storage → Save sync).";
   if (r.saveMode === "off") return "Save sync is off for this emulator: choose where it keeps saves in Settings → Emulators.";
   if (job && (job.type === "running" || job.type === "progress")) return "Wait for the game to close; its saves sync then.";
   return null;
@@ -1608,8 +1609,11 @@ function mediaHtml(r) {
 function savesHtml(r) {
   if (webdavSaves()) {
     const blocker = syncBlocker(r);
+    const native = r.emulatorId === "__native";
+    const last = r.nativeSaves?.lastUpload ? ` Last upload: ${new Date(r.nativeSaves.lastUpload).toLocaleString()}.` : "";
     return `<h3>Saves on WebDAV</h3>
       <div class="row" style="margin-bottom:6px"><span class="hint" style="flex:1">${esc(blocker && r.installed ? blocker
+        : native ? `Native game: whatever changes in its folder (saves, settings) is uploaded to WebDAV after you play, and brought back before you play on another PC.${last}`
         : `The save folders of ${r.emulator ?? "its emulator"} sync with WebDAV when RomM Launcher starts and closes, or with Sync now.`)}</span>
         ${r.installed && !blocker ? '<button data-act="sync" title="Sync this emulator\'s save folders with WebDAV now">⟳ Sync now</button>' : ""}</div>`;
   }
@@ -1619,6 +1623,7 @@ function savesHtml(r) {
   const status = r.offline ? "Offline: saves are kept on this PC and upload when RomM is reachable again."
     : blocker && r.installed ? blocker
     : !r.syncSaves ? "Save sync is turned off (Settings → Storage)."
+    : r.emulatorId === "__native" ? "Native games' saves sync with WebDAV only (Settings → Storage → Save sync)."
     : r.saveMode === "off" ? "Save sync is off for this emulator (Settings → Emulators)."
     : "Pulled before each launch, uploaded when the emulator closes.";
   if (r.offline) return `<h3>Saves</h3><div class="hint">${esc(status)}</div>`;

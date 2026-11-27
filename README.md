@@ -306,6 +306,21 @@ Syncs the **save folders of each emulator** with a WebDAV folder, two ways:
   copy goes to `save-backups` in the launcher's data folder; *Decide later* leaves both as they are
   and asks again at the next sync.
 
+**Native PC games** need no save folder: like RetroArch's DOSBox Pure, the launcher treats
+whatever changes in the game's own folder as its saves.
+
+- Before a native game's first launch, it notes every file in the folder (size and date).
+- After you play, new or changed files and a list of deleted ones go into one zip, uploaded as
+  `Native\<platform>\<game> [<id>].zip` in the WebDAV folder. Logs, temporary files, crash dumps
+  and caches are left out, and a change bigger than 512 MB is not uploaded.
+- Before you play, a zip that changed on WebDAV (from another PC) is applied over the game folder,
+  so a fresh download on a new PC starts with your saves.
+- If both this PC and WebDAV changed, the newer wins and the other is kept in
+  `save-backups\native\`.
+- **Sync now** in the game's details does both at once.
+
+Saves a game keeps outside its folder (Documents, AppData…) are not covered.
+
 ### RomM
 
 With sync on, for every launch:

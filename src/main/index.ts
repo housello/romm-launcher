@@ -16,6 +16,7 @@ import { applyRenames, buildPlan, undoInfo, undoLast } from "./mame";
 import { setGameEmulator, type GameEmulator } from "./gameEmulators";
 import { applyArcadeDb, type AdbOptions } from "./arcadedb";
 import { mediaFolder, mediaOf, openMedia, saveMedia } from "./media";
+import { nativeSaveInfo } from "./nativeSaves";
 import { guessList, listXmlFromExe, mameExes, softwareLists } from "./mameSources";
 import { presetOf, syncFoldersOf, localPathOf, storedFolderPath, webdavClient } from "./folderSync";
 import { cancel, resolveDownloadChoice, verifyDownloads, openEmulator, resolveConflicts, syncAllFolders, webdavSyncOn, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
@@ -483,6 +484,7 @@ function registerIpc(): void {
       saveMode: resolved ? saveModeOf(resolved.emulator) : "off",
       syncSaves: loadConfig().syncSaves,
       media: mediaOf(r),
+      nativeSaves: nativeSaveInfo(r.id),
       saves: (r.user_saves ?? []).map(saveRow),
       states: (r.user_states ?? []).map(saveRow),
     };

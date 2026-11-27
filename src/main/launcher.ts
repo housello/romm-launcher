@@ -13,6 +13,7 @@ import { buildArgs } from "./emulators";
 import { getInstalled, listInstalled, metaOf, putInstalled, removeInstalled, type InstalledGame } from "./library";
 import { checkServer, isOffline, noteFailure } from "./connection";
 import { recordSession } from "./playSessions";
+import { forgetBaseline, nativeAfterPlay, nativeBeforePlay } from "./nativeSaves";
 import { describeFolderSync, syncEmulatorFolders, syncFoldersOf, type Conflict, type Resolution } from "./folderSync";
 import { findChdFolder, isArcade, setNameOf } from "./chd";
 import { resolvePath } from "./paths";
@@ -573,6 +574,7 @@ export async function install(romId: number, emit: Emit, options: { extractZip?:
 }
 
 export async function uninstall(romId: number): Promise<void> {
+  await forgetBaseline(romId);
   // Saves that live inside the game folder (custom patterns like {romDir}) would
   // be deleted with it: upload them first, and refuse if that fails.
   const current = getInstalled(romId);
@@ -668,6 +670,17 @@ export async function launch(romId: number, emit: Emit, hooks: { onStart: () => 
     putInstalled(game);
   }
   const romPath = join(game.dir, game.launchFile);
+  // Native games with WebDAV save sync: what changed in their folder is their save (nativeSaves.ts).
+  const nativeSync = native && webdavSyncOn();
+  if (nativeSync) {
+    emit({ romId, type: "progress", label: "Syncing saves…", received: 0, total: 0 });
+    try {
+      const note = await nativeBeforePlay(game);
+      if (note) emit({ romId, type: "notice", message: note, level: "ok" });
+    } catch (error) {
+      emit({ romId, type: "notice", message: `Save sync skipped: ${(error as Error).message}`, level: "error" });
+    }
+  }
   // Save sync: pin/locate the save files, then bring newer server copies down
   // before the emulator can open them. A sync problem never blocks the game.
   let saveCtx: SyncContext | null = null;
@@ -735,6 +748,11 @@ export async function launch(romId: number, emit: Emit, hooks: { onStart: () => 
     recordSession(romId, started, ended);
     hooks.onExit();
     if (saveCtx) void syncAfterExit(saveCtx, romId, emit);
+    if (nativeSync) {
+      void nativeAfterPlay(game)
+        .then((note) => note && emit({ romId, type: "notice", message: note, level: "ok" }))
+        .catch((error) => emit({ romId, type: "notice", message: `Saves not uploaded: ${(error as Error).message}`, level: "error" }));
+    }
   });
 }
 
@@ -823,6 +841,11 @@ export async function syncNow(romId: number, emit: Emit): Promise<string> {
   const resolved = resolveEmulator([game.platformSlug], romId);
   if (!resolved) throw new LaunchError(`No emulator is set for platform "${game.platformSlug}".`, "no-emulator");
   if (running.has(romId) || pushing.has(romId)) throw new LaunchError("The game is running; saves sync when it exits.");
+  if (webdavSyncOn() && resolved.emulator.id === NATIVE_ID) {
+    const down = await nativeBeforePlay(game);
+    const up = await nativeAfterPlay(game);
+    return [down, up].filter(Boolean).join(" ") || "Saves already in sync.";
+  }
   if (webdavSyncOn()) return syncFoldersFor(resolved.emulator, romId, emit);
   const { ctx } = await prepareSaves(resolved.emulator, resolved.mapping, game);
   if (!ctx) throw new LaunchError(`Save sync is off for ${resolved.emulator.name}. Set it under Settings → Emulators.`);
