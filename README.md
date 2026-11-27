@@ -170,6 +170,13 @@ with spaces are safe as long as the template quotes them. `.bat`/`.cmd` wrappers
   Before downloading a game with **several top-level files or folders** (e.g. the game plus
   `Patch\` and `Translation\` folders), the launcher lists them, all ticked: untick what you
   don't want. Turn the question off in Settings → Storage.
+- **Manuals, guides and media**: a game's details list what RomM keeps for it besides the game
+  itself, grouped as Manuals, Guides, Soundtrack, Video and Screenshot files: files uploaded to
+  the game (categories manual, walkthrough, soundtrack, screenshot, which are not downloaded with
+  the game), the manual a metadata provider found, its video and its YouTube link. **Open** (or
+  **Play**, **View**) downloads one once to the data folder (`media\<game id>\`) and opens it with
+  the program Windows uses for it; **Save…** keeps a copy where you choose; web links open in the
+  browser. **Open folder** shows the ones already on this PC.
 - **Native PC games**: choose **Native (PC game)** as a platform's emulator in Settings →
   Platforms. No emulator is used: the game's own `.exe`, `.bat`, `.cmd` or `.lnk` is started
   (zips are extracted first). When there are several, the first Play asks which one, listing

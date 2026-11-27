@@ -1557,6 +1557,7 @@ function renderDetail() {
         <div><label><input type="radio" name="launch" value="${esc(f)}" ${f === installed.launchFile ? "checked" : ""}> ${esc(f)}</label></div>`).join("")}
         <div class="hint" style="border:0">${r.emulatorId === "__native" ? "Native game: the selected .exe/.bat/.lnk is the one started." : "The selected file is passed to the emulator as {rom}."} Location: ${esc(installed.dir)}</div></div>`
       : r.files.length ? `<h3>Files on server</h3><div class="files">${r.files.map((f) => `<div><span>${esc(f.name)}</span><span>${fmtBytes(f.size)}</span></div>`).join("")}</div>` : ""}
+      ${mediaHtml(r)}
       ${savesHtml(r)}
       ${r.screenshots?.length ? `<h3>Screenshots</h3><div class="shots">${r.screenshots.map((s) => img(s.s, s.u)).filter(Boolean).map((src) => `<img loading="lazy" src="${esc(src)}">`).join("")}</div>` : ""}
     </div>`;
@@ -1580,6 +1581,28 @@ function syncBlocker(r) {
   if (r.saveMode === "off") return "Save sync is off for this emulator: choose where it keeps saves in Settings → Emulators.";
   if (job && (job.type === "running" || job.type === "progress")) return "Wait for the game to close; its saves sync then.";
   return null;
+}
+
+const MEDIA_GROUPS = [["manual", "Manuals"], ["guide", "Guides"], ["soundtrack", "Soundtrack"], ["video", "Video"], ["screenshot", "Screenshot files"]];
+// Which media groups are open, kept while the launcher runs.
+const mediaOpen = new Set(["manual", "guide"]);
+
+/** The game's manuals, guides, soundtrack, videos and screenshot files, each to open or save. */
+function mediaHtml(r) {
+  const items = r.media ?? [];
+  if (!items.length) return "";
+  const groups = MEDIA_GROUPS.map(([kind, title]) => [kind, title, items.filter((m) => m.kind === kind)]).filter(([, , list]) => list.length);
+  return `<h3>Manuals, guides and media ${items.some((m) => m.local) ? '<a class="link" data-media-folder style="font-weight:400;font-size:12px;margin-left:8px">Open folder</a>' : ""}</h3>
+    <div class="media">${groups.map(([kind, title, list]) => `
+      <details data-media-group="${kind}" ${mediaOpen.has(kind) ? "open" : ""}><summary>${esc(title)} <span class="muted">${list.length}</span></summary>
+        ${list.map((m) => `<div class="media-row">
+          <span title="${esc(m.name)}">${m.source === "web" ? "🔗 " : ""}${esc(m.name)}</span>
+          <span class="muted">${m.size ? fmtBytes(m.size) : ""}${m.local ? " · on this PC" : ""}</span>
+          <button data-media-open="${esc(m.key)}">${m.source === "web" ? "Open in browser" : kind === "soundtrack" || kind === "video" ? "Play" : kind === "screenshot" ? "View" : "Open"}</button>
+          ${m.source === "web" ? "" : `<button data-media-save="${esc(m.key)}" data-name="${esc(m.name)}" title="Save a copy">Save…</button>`}
+        </div>`).join("")}
+      </details>`).join("")}</div>
+    <div class="hint">Kept on the RomM server, not downloaded with the game. Opening one downloads it once to this PC.</div>`;
 }
 
 function savesHtml(r) {
@@ -1636,8 +1659,39 @@ function renderDetailActions() {
   }
 }
 
+$("#detail").addEventListener("toggle", (e) => {
+  const group = e.target.dataset?.mediaGroup;
+  if (group) e.target.open ? mediaOpen.add(group) : mediaOpen.delete(group);
+}, true);
+
 $("#detail").addEventListener("click", async (e) => {
   if (e.target.closest(".close")) return closeDetail();
+  // Manuals, guides and media
+  const mediaBtn = e.target.closest("[data-media-open], [data-media-save], [data-media-folder]");
+  if (mediaBtn && detailRom) {
+    const id = detailRom.id;
+    try {
+      if (mediaBtn.dataset.mediaFolder !== undefined) return void (await api("media:folder", id));
+      mediaBtn.disabled = true;
+      const label = mediaBtn.textContent;
+      mediaBtn.textContent = "Downloading…";
+      try {
+        if (mediaBtn.dataset.mediaOpen) await api("media:open", id, mediaBtn.dataset.mediaOpen);
+        else if (await api("media:save", id, mediaBtn.dataset.mediaSave, mediaBtn.dataset.name)) toast("Saved", "ok");
+      } finally {
+        mediaBtn.textContent = label;
+        mediaBtn.disabled = false;
+      }
+      // Show it as being on this PC now.
+      if (state.detailId === id) {
+        detailRom = await api("rom:get", id).catch(() => detailRom);
+        renderDetail();
+      }
+    } catch (error) {
+      toast(error.message, "error");
+    }
+    return;
+  }
   const removeCol = e.target.closest("[data-remove-col]");
   if (removeCol && detailRom) {
     const colId = Number(removeCol.dataset.removeCol);

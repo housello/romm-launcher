@@ -15,6 +15,7 @@ import { lastVersions, rememberVersion } from "./lastVersions";
 import { applyRenames, buildPlan, undoInfo, undoLast } from "./mame";
 import { setGameEmulator, type GameEmulator } from "./gameEmulators";
 import { applyArcadeDb, type AdbOptions } from "./arcadedb";
+import { mediaFolder, mediaOf, openMedia, saveMedia } from "./media";
 import { guessList, listXmlFromExe, mameExes, softwareLists } from "./mameSources";
 import { presetOf, syncFoldersOf, localPathOf, storedFolderPath, webdavClient } from "./folderSync";
 import { cancel, resolveDownloadChoice, verifyDownloads, openEmulator, resolveConflicts, syncAllFolders, webdavSyncOn, resolveFileChoice, syncNow, install, launch, LaunchError, resolveEmulator, runningGames, setLaunchFile, uninstall, type LaunchEvent } from "./launcher";
@@ -481,6 +482,7 @@ function registerIpc(): void {
       collections: (Array.isArray(r.user_collections) ? r.user_collections : []).map((c: any) => ({ id: c.id, name: c.name, isFavorite: !!c.is_favorite })),
       saveMode: resolved ? saveModeOf(resolved.emulator) : "off",
       syncSaves: loadConfig().syncSaves,
+      media: mediaOf(r),
       saves: (r.user_saves ?? []).map(saveRow),
       states: (r.user_states ?? []).map(saveRow),
     };
@@ -598,6 +600,15 @@ function registerIpc(): void {
     // Inside the launcher's folder (portable), the path is stored relative to it.
     return result.canceled ? null : toStored(result.filePaths[0] ?? "") || null;
   });
+  // A game's manuals, guides, soundtracks, screenshots and videos (media.ts).
+  handle("media:open", (romId: number, key: string) => openMedia(Number(romId), String(key)));
+  handle("media:save", async (romId: number, key: string, name: string) => {
+    const result = await dialog.showSaveDialog(win!, { defaultPath: join(app.getPath("downloads"), String(name ?? "file").replace(/[<>:"/\\|?*]/g, "_")) });
+    if (result.canceled || !result.filePath) return false;
+    await saveMedia(Number(romId), String(key), result.filePath);
+    return true;
+  });
+  handle("media:folder", async (romId: number) => shell.openPath(await mediaFolder(Number(romId))));
   handle("dialog:pickFolder", async () => {
     const result = await dialog.showOpenDialog(win!, { properties: ["openDirectory", "createDirectory"], ...browseStart() });
     return result.canceled ? null : toStored(result.filePaths[0] ?? "") || null;

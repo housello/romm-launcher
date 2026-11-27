@@ -329,3 +329,11 @@ table.platforms td .row button { padding: 7px 9px; }
 .adb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 6px 18px; margin-top: 8px; }
 .adb-grid label { cursor: pointer; }
 .adb-grid .adb-shot { margin-right: 10px; white-space: nowrap; }
+
+/* manuals, guides and media in game details */
+.media details { margin: 2px 0 6px; }
+.media summary { cursor: pointer; font-weight: 600; padding: 3px 0; }
+.media-row { display: flex; align-items: center; gap: 8px; padding: 3px 0 3px 16px; }
+.media-row > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-row .muted { font-size: 12px; white-space: nowrap; }
+.media-row button { padding: 2px 10px; font-size: 12px; }
